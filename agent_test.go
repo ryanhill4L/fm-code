@@ -87,3 +87,20 @@ func containsKey(m map[string]bool, sub string) bool {
 	}
 	return false
 }
+
+func TestThinkPlansBeforeActing(t *testing.T) {
+	m := &scripted{replies: []string{
+		`{"step1":"Read calc.py","step2":"Fix the comparison","step3":"Reply with what changed"}`,
+		`{"tool":"reply","message":"ok"}`,
+	}}
+	a := &agent{model: m, tools: newBox(t, true), out: io.Discard, think: true}
+	if _, err := a.Send("fix calc"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.history[0].Content; got != "fix calc\n\nPlan:\n- Read calc.py\n- Fix the comparison\n- Reply with what changed" {
+		t.Errorf("the plan should ride along with the request: %q", got)
+	}
+	if m.schemas[0].(map[string]any)["title"] != "Plan" {
+		t.Error("first request should be the plan")
+	}
+}

@@ -98,11 +98,15 @@ type agent struct {
 	tools   *toolbox
 	out     io.Writer
 	debug   bool      // print each raw action with its token counts and timing
+	think   bool      // plan each turn in a separate request before acting
 	history []message // excludes the system prompt
 }
 
 // Send runs one user turn to completion and returns the final reply.
 func (a *agent) Send(input string) (string, error) {
+	if a.think {
+		input = a.plan(input)
+	}
 	a.history = append(a.history, message{"user", input})
 	a.tools.read = nil // read-before-write is checked per turn; old reads may have scrolled out
 	seen := map[string]bool{}
@@ -146,6 +150,42 @@ func (a *agent) Send(input string) (string, error) {
 		return "", fmt.Errorf("stopped after %d steps without a final reply", maxSteps)
 	}
 	return act.Message, nil
+}
+
+const planPrompt = `You plan the work of a coding assistant. Given the user's request and the project's files, write the three steps the assistant should take, in order.
+Each step is one short sentence naming a real file from the list, e.g. "Read calc.py", "Fix the comparison in is_adult", "Run python3 calc.py to check".
+If the request is only a question or a greeting, the steps are what to read and then "Reply with the answer".`
+
+var planSchema = map[string]any{
+	"title":                "Plan",
+	"type":                 "object",
+	"properties":           map[string]any{"step1": map[string]any{"type": "string"}, "step2": map[string]any{"type": "string"}, "step3": map[string]any{"type": "string"}},
+	"required":             []string{"step1", "step2", "step3"},
+	"x-order":              []string{"step1", "step2", "step3"},
+	"additionalProperties": false,
+}
+
+// plan asks a separate request for a short plan and returns the input with
+// the plan appended. Free-form "thought" fields make this model ramble and
+// get answers wrong; three bounded steps keep it on a track it chose itself.
+func (a *agent) plan(input string) string {
+	msgs := windowed(planPrompt+"\n\nProject files:\n"+projectTree(a.tools.root, maxTreeEntries), append(append([]message(nil), a.history...), message{"user", input}), historyBudget)
+	c, err := a.model.complete(context.Background(), msgs, planSchema)
+	var p struct{ Step1, Step2, Step3 string }
+	if err != nil || json.Unmarshal([]byte(c.Text), &p) != nil {
+		return input
+	}
+	var steps []string
+	for _, s := range []string{p.Step1, p.Step2, p.Step3} {
+		if s = strings.TrimSpace(s); s != "" {
+			steps = append(steps, clip(s, 120))
+		}
+	}
+	if len(steps) == 0 {
+		return input
+	}
+	fmt.Fprintf(a.out, "\n%s✻ Plan: %s%s\n", dim, strings.Join(steps, " → "), reset)
+	return input + "\n\nPlan:\n- " + strings.Join(steps, "\n- ")
 }
 
 // next asks the model for one action and records it in the history.
