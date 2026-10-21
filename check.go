@@ -15,9 +15,11 @@ import (
 // small model otherwise keeps "improving" work that is already finished.
 func (t *toolbox) check(p string) string {
 	var cmds [][]string
+	// Running tests runs project code, which only modes that already run
+	// commands unasked may do.
 	hasTests := func(pattern string) bool {
 		m, _ := filepath.Glob(filepath.Join(t.root, pattern))
-		return len(m) > 0
+		return len(m) > 0 && t.runTests != nil && t.runTests()
 	}
 	switch filepath.Ext(p) {
 	case ".go":
@@ -52,11 +54,12 @@ func (t *toolbox) check(p string) string {
 		}
 		name := strings.Join(cmd[:2], " ")
 		ctx, cancel := context.WithTimeout(context.Background(), bashTimeout)
-		c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
-		c.Dir = t.root
-		c.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1") // checks shouldn't litter the repo
-		out, err := c.CombinedOutput()
+		out, err := runLimited(ctx, t.root, cmd[0], cmd[1:]...)
+		timedOut := ctx.Err() != nil
 		cancel()
+		if timedOut {
+			return "\ncheck: " + name + " timed out after " + bashTimeout.String() + ", which may not be caused by this edit."
+		}
 		if err != nil {
 			return "\ncheck FAILED (" + name + "), fix this before replying:\n" + truncate(strings.TrimSpace(string(out)), 1500)
 		}

@@ -12,15 +12,105 @@ var ident = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func wordRe(name string) *regexp.Regexp { return regexp.MustCompile(`\b` + name + `\b`) }
 
-// rename replaces every whole-word use of an identifier in one file, which is
-// what a small model means when it edits a bare name that appears many times.
-func (t *toolbox) rename(a action, p, src string) (string, error) {
-	re := wordRe(a.OldText)
-	n := len(re.FindAllStringIndex(src, -1))
+// notRenamable are words a bare old_text names too loosely to rename everywhere.
+var notRenamable = map[string]bool{}
+
+func init() {
+	for _, w := range strings.Fields("True False None nil true false null undefined self this return if else for while def func class import from and or not in is") {
+		notRenamable[w] = true
+	}
+}
+
+// isRename reports whether old and new are bare identifiers and old is used
+// more than once as code in src, so the edit means renaming it.
+func isRename(src, old, new, comment string) bool {
+	return ident.MatchString(old) && ident.MatchString(new) && len(old) >= 3 &&
+		!notRenamable[old] && len(codeUses(src, old, comment)) > 1
+}
+
+// codeUses finds the whole-word uses of name in src outside strings and comments.
+func codeUses(src, name, comment string) [][]int {
+	code := codeMask(src, comment)
+	var uses [][]int
+	for _, m := range wordRe(name).FindAllStringIndex(src, -1) {
+		if code[m[0]] {
+			uses = append(uses, m)
+		}
+	}
+	return uses
+}
+
+// lineComment is the line comment marker for a file's language.
+func lineComment(path string) string {
+	switch filepath.Ext(path) {
+	case ".py", ".sh", ".bash", ".rb", ".yaml", ".yml", ".toml", ".r", ".pl":
+		return "#"
+	}
+	return "//"
+}
+
+// codeMask marks the bytes of src that are code rather than string literals
+// or comments. Quoted strings end at their line; backtick strings may span lines.
+func codeMask(src, comment string) []bool {
+	code := make([]bool, len(src))
+	for i := 0; i < len(src); {
+		switch c := src[i]; {
+		case strings.HasPrefix(src[i:], comment):
+			i = lineEnd(src, i)
+		case comment == "//" && strings.HasPrefix(src[i:], "/*"):
+			if j := strings.Index(src[i+2:], "*/"); j >= 0 {
+				i += j + 4
+			} else {
+				i = len(src)
+			}
+		case c == '"' || c == '\'':
+			for i++; i < len(src) && src[i] != c && src[i] != '\n'; i++ {
+				if src[i] == '\\' {
+					i++
+				}
+			}
+			if i < len(src) && src[i] == c {
+				i++
+			}
+		case c == '`':
+			if j := strings.IndexByte(src[i+1:], '`'); j >= 0 {
+				i += j + 2
+			} else {
+				i = len(src)
+			}
+		default:
+			code[i] = true
+			i++
+		}
+	}
+	return code
+}
+
+// lineEnd is the index of the newline at or after i, or len(s).
+func lineEnd(s string, i int) int {
+	if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
+		return i + j
+	}
+	return len(s)
+}
+
+// rename replaces every whole-word use of an identifier in one file's code,
+// which is what a small model means when it edits a bare name that appears
+// many times. Strings and comments are left alone.
+func (t *toolbox) rename(a action, p, src string, crlf bool) (string, error) {
+	uses := codeUses(src, a.OldText, lineComment(p))
+	n := len(uses)
 	if !t.approve(a, fmt.Sprintf("rename %s to %s in %s (%d places)", a.OldText, a.NewText, a.Path, n)) {
 		return "", fmt.Errorf("user declined this change")
 	}
-	if err := os.WriteFile(p, []byte(re.ReplaceAllLiteralString(src, a.NewText)), 0o644); err != nil {
+	var b strings.Builder
+	last := 0
+	for _, m := range uses {
+		b.WriteString(src[last:m[0]] + a.NewText)
+		last = m[1]
+	}
+	b.WriteString(src[last:])
+	if err := writeText(p, b.String(), crlf); err != nil {
 		return "", err
 	}
 	t.markRead(p)
@@ -93,32 +183,48 @@ func (t *toolbox) writeFile(a action) (string, error) {
 
 // blockEnd extends a match that is a single block-opening line (ending in ":"
 // or "{") to the end of that block: by indentation for ":" and by brace depth
-// for "{". Other matches are returned unchanged.
-func blockEnd(src string, start, end int) int {
+// for "{", ignoring braces in strings and comments. Other matches are returned
+// unchanged. It reports false when the braces never balance.
+func blockEnd(src string, start, end int) (int, bool) {
 	header := strings.TrimSpace(src[start:end])
 	if strings.Contains(header, "\n") || !(strings.HasSuffix(header, ":") || strings.HasSuffix(header, "{")) {
-		return end
+		return end, true
 	}
 	lineStart := strings.LastIndex(src[:start], "\n") + 1
-	indent := indentOf(src[lineStart:])
-	pos, depth := end, strings.Count(header, "{")-strings.Count(header, "}")
-	for pos < len(src) {
-		next := strings.IndexByte(src[pos+1:], '\n')
-		if next < 0 {
-			next = len(src) - pos - 1
+	headerEnd := lineEnd(src, start+len(strings.TrimRight(src[start:end], " \t\r\n")))
+	pos := headerEnd
+	if strings.HasSuffix(header, "{") {
+		code, depth, closed := codeMask(src, "//"), 0, false
+		for i := lineStart; i < len(src) && !closed; i++ {
+			if !code[i] || (src[i] != '{' && src[i] != '}') {
+				continue
+			}
+			if src[i] == '{' {
+				depth++
+			} else if depth--; depth < 0 {
+				return end, false
+			} else if depth == 0 && i >= headerEnd {
+				pos, closed = lineEnd(src, i), true
+			}
 		}
-		line := src[pos+1 : pos+1+next]
-		if strings.HasSuffix(header, "{") {
-			if depth <= 0 {
+		if !closed {
+			return end, false
+		}
+	} else {
+		indent := len(indentOf(src[lineStart:]))
+		for pos < len(src) {
+			next := lineEnd(src, pos+1)
+			if line := src[pos+1 : next]; strings.TrimSpace(line) != "" && len(indentOf(line)) <= indent {
 				break
 			}
-			depth += strings.Count(line, "{") - strings.Count(line, "}")
-		} else if strings.TrimSpace(line) != "" && len(indentOf(line)) <= len(indent) {
-			break
+			pos = next
 		}
-		pos += 1 + next
 	}
-	return pos
+	// old_text that took the header's newline takes the block's too.
+	if strings.HasSuffix(src[start:end], "\n") && pos < len(src) {
+		pos++
+	}
+	return pos, true
 }
 
 func (t *toolbox) editFile(a action) (string, error) {
@@ -136,9 +242,16 @@ func (t *toolbox) editFile(a action) (string, error) {
 	if a.OldText == a.NewText {
 		return "", fmt.Errorf("old_text and new_text are the same, so there is nothing to change. If the task is done, reply")
 	}
+	// Match and edit with "\n" line endings; writeText restores "\r\n".
 	src := string(data)
-	if ident.MatchString(a.OldText) && ident.MatchString(a.NewText) && len(wordRe(a.OldText).FindAllStringIndex(src, 2)) > 1 {
-		return t.rename(a, p, src)
+	crlf := strings.Contains(src, "\r\n")
+	if crlf {
+		src = strings.ReplaceAll(src, "\r\n", "\n")
+		a.OldText = strings.ReplaceAll(a.OldText, "\r\n", "\n")
+		a.NewText = strings.ReplaceAll(a.NewText, "\r\n", "\n")
+	}
+	if isRename(src, a.OldText, a.NewText, lineComment(p)) {
+		return t.rename(a, p, src, crlf)
 	}
 	start, end, newText, err := locate(src, a.OldText, a.NewText)
 	if err != nil {
@@ -147,16 +260,28 @@ func (t *toolbox) editFile(a action) (string, error) {
 		return "", fmt.Errorf("%v in %s. Here is the file:\n%s", err, a.Path, shown)
 	}
 	if strings.TrimSpace(newText) == "" {
-		end = blockEnd(src, start, end) // deleting a def/func header means deleting its body too
+		// Deleting a def/func header means deleting its body too.
+		var ok bool
+		if end, ok = blockEnd(src, start, end); !ok {
+			return "", fmt.Errorf("old_text opens a block whose end can't be found, so nothing was deleted. Put the whole block, through its closing line, in old_text")
+		}
 	}
 	if !t.approve(a, fmt.Sprintf("edit %s\n%s", a.Path, diff(src[start:end], newText))) {
 		return "", fmt.Errorf("user declined this change")
 	}
-	if err := os.WriteFile(p, []byte(src[:start]+newText+src[end:]), 0o644); err != nil {
+	if err := writeText(p, src[:start]+newText+src[end:], crlf); err != nil {
 		return "", err
 	}
 	t.markRead(p)
 	return "edited " + a.Path + t.check(p), nil
+}
+
+// writeText writes s to p, with "\r\n" line endings if crlf.
+func writeText(p, s string, crlf bool) error {
+	if crlf {
+		s = strings.ReplaceAll(s, "\n", "\r\n")
+	}
+	return os.WriteFile(p, []byte(s), 0o644)
 }
 
 // lostLines counts the non-blank lines of old that are missing from new,
@@ -194,11 +319,14 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 		return 0, 0, "", fmt.Errorf("old_text is required")
 	}
 	old = stripLineNumbers(old)
-	switch n := strings.Count(src, old); {
-	case n > 1:
-		return 0, 0, "", fmt.Errorf("old_text matches %d places; include more surrounding lines to make it unique", n)
-	case n == 1:
-		start = strings.Index(src, old)
+	if !numberedLine.MatchString(src) {
+		new = stripLineNumbers(new)
+	}
+	switch at := wordMatches(src, old); {
+	case len(at) > 1:
+		return 0, 0, "", fmt.Errorf("old_text matches %d places; include more surrounding lines to make it unique", len(at))
+	case len(at) == 1:
+		start = at[0]
 		end = start + len(old)
 		lineStart := strings.LastIndex(src[:start], "\n") + 1
 		before := src[lineStart:start]
@@ -210,7 +338,8 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 		line := src[lineStart:]
 		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 		oldLines := strings.Split(old, "\n")
-		if len(oldLines) > 1 && strings.HasPrefix(oldLines[1], indent) && !startsIndented(new) {
+		indented := len(oldLines) > 1 && strings.HasPrefix(oldLines[1], indent) || len(oldLines) == 1 && laterLinesIndented(new, indent)
+		if indented && !startsIndented(new) {
 			return lineStart, end, indent + new, nil // later lines already carry their indent
 		}
 		return lineStart, end, indentLines(dedent(new), indent), nil
@@ -235,7 +364,7 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 		}
 	}
 	if found < 0 {
-		if start, end, repl, ok := matchDeclaration(lines, want, new); ok {
+		if start, end, repl, ok := matchDeclaration(src, lines, want, new); ok {
 			return start, end, repl, nil
 		}
 		if start, end, repl, ok := matchLineSet(lines, want, new); ok {
@@ -264,7 +393,56 @@ func lineSpan(lines []string, from, to int) (start, end int) {
 
 func indentOf(line string) string { return line[:len(line)-len(strings.TrimLeft(line, " \t"))] }
 
-var lineNumber = regexp.MustCompile(`^\s*\d+(\t|\\t)`)
+// wordMatches finds where old occurs in src, skipping matches that start or
+// end in the middle of a word ("x = 1" inside "max = 1").
+func wordMatches(src, old string) []int {
+	var at []int
+	for i := 0; ; {
+		j := strings.Index(src[i:], old)
+		if j < 0 {
+			return at
+		}
+		s, e := i+j, i+j+len(old)
+		if !(isWord(old[0]) && s > 0 && isWord(src[s-1])) && !(isWord(old[len(old)-1]) && e < len(src) && isWord(src[e])) {
+			at = append(at, s)
+			i = e
+		} else {
+			i = s + 1
+		}
+	}
+}
+
+func isWord(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// laterLinesIndented reports whether a multi-line new_text for a one-line
+// old_text was written at file level: its later lines already carry indent.
+// After a block opener they must be deeper than indent, or they could just be
+// the block's body written from column zero.
+func laterLinesIndented(new, indent string) bool {
+	lines := strings.Split(strings.TrimRight(new, "\n"), "\n")
+	least := -1
+	for _, l := range lines[1:] {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if !strings.HasPrefix(l, indent) {
+			return false
+		}
+		if n := len(indentOf(l)); least < 0 || n < least {
+			least = n
+		}
+	}
+	first := strings.TrimSpace(lines[0])
+	opens := strings.HasSuffix(first, ":") || strings.HasSuffix(first, "{")
+	return least >= 0 && (!opens || least > len(indent))
+}
+
+var (
+	lineNumber   = regexp.MustCompile(`^\s*\d+(\t|\\t)`)
+	numberedLine = regexp.MustCompile(`(?m)^\s*\d+\t`)
+)
 
 // stripLineNumbers removes "12\t" prefixes copied from read_file output, but
 // only when every line has one.
@@ -285,7 +463,8 @@ var declName = regexp.MustCompile(`^\s*(?:export\s+)?(?:async\s+)?(?:def|func|fu
 
 // matchDeclaration handles a one-line old_text that misquotes a declaration,
 // e.g. "def old_helper():" for "def old_helper(x):": the name picks the line.
-func matchDeclaration(lines, want []string, new string) (start, end int, repl string, ok bool) {
+// A new_text that brings its own body replaces the old body too.
+func matchDeclaration(src string, lines, want []string, new string) (start, end int, repl string, ok bool) {
 	m := declName.FindStringSubmatch(want[0])
 	if len(want) != 1 || m == nil {
 		return 0, 0, "", false
@@ -303,7 +482,23 @@ func matchDeclaration(lines, want []string, new string) (start, end int, repl st
 		return 0, 0, "", false
 	}
 	start, end = lineSpan(lines, found, found+1)
+	if hasBody(new, m[1]) {
+		if e, closed := blockEnd(src, start, end); closed {
+			end = start + len(strings.TrimRight(src[start:e], " \t\r\n"))
+		}
+	}
 	return start, end, indentLines(dedent(new), indentOf(lines[found])), true
+}
+
+// hasBody reports whether s declares name and has lines after that declaration.
+func hasBody(s, name string) bool {
+	lines := strings.Split(strings.TrimRight(s, " \t\n"), "\n")
+	for _, l := range lines[:len(lines)-1] {
+		if d := declName.FindStringSubmatch(l); d != nil && d[1] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // matchLineSet handles old_text whose lines each appear once in the file but

@@ -64,7 +64,7 @@ func main() {
 		tr.label = func() string { return mode.label() }
 		tr.cycleMode = func() string { mode = mode.next(); return mode.label() }
 	}
-	tools := &toolbox{root: root, approve: func(a action, summary string) bool {
+	tools := &toolbox{root: root, runTests: func() bool { return mode != modeAsk }, approve: func(a action, summary string) bool {
 		fmt.Printf("\n%s\n", summary)
 		switch mode {
 		case modeAutopilot:
@@ -80,7 +80,7 @@ func main() {
 			}
 			fmt.Printf("%s⚠ auto mode held this command: %s%s\n", yellow, v.reason, reset)
 		}
-		line, _ := rd.ReadLine("apply? [y/N] ", nil)
+		line, _ := rd.Answer("apply? [y/N] ")
 		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y")
 	}}
 	ag := &agent{model: model, tools: tools, out: os.Stdout, debug: *debug || *verbose, think: *think}

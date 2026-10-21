@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -61,7 +59,7 @@ var questionPrompt = buildPrompt(readOnlySpecs, "- This request is a question. A
 
 var questionSchema = buildSchema(readOnlySpecs)
 
-var changeVerb = regexp.MustCompile(`\b(change|fix|add|remove|rename|set|update|delete|create|move|make|write|implement|refactor|replace|edit|convert|bump|sort|clean|build|install)\b`)
+var changeVerb = regexp.MustCompile(`\b(change|fix|add|append|insert|remove|drop|rename|set|update|delete|create|move|swap|make|write|implement|refactor|replace|edit|convert|bump|sort|clean|build|install|finish|do the|put|use|handle|support)\b`)
 var questionStart = regexp.MustCompile(`^(what|which|where|how|why|who|when|is|are|does|do|did|can|could|list|show|find|explain|tell|count)\b`)
 
 // isQuestion reports whether a request only asks for information.
@@ -142,33 +140,35 @@ type agent struct {
 
 // Send runs one user turn to completion and returns the final reply.
 func (a *agent) Send(input string) (string, error) {
-	if a.think {
-		input = a.plan(input)
-	}
-	a.history = append(a.history, message{"user", input})
+	// Classify the user's own words, before a plan adds verbs of its own.
 	a.tools.read = nil // read-before-write is checked per turn; old reads may have scrolled out
 	a.tools.lockTests = !asksForTests.MatchString(strings.ToLower(input))
 	// A question gets a toolset without edits: given the chance, this model
 	// "answers" questions by changing the code it was asked about.
 	a.question = isQuestion(input)
+	if a.think {
+		input = a.plan(input)
+	}
+	a.history = append(a.history, message{"user", input + a.tools.relevantFiles(input)})
 	schema := actionSchema
 	if a.question {
 		schema = questionSchema
 	}
 	seen := map[string]bool{}  // actions already tried since the files last changed
-	failed := map[string]int{} // failed edits per file and old_text
+	failed := map[string]int{} // failed edits per file
 	retried := false
 	for step := 0; step < maxSteps; step++ {
 		act, _, err := a.next(schema)
 		if err != nil {
-			// One retry: a cut-off or garbled action is usually a runaway reply.
+			// One retry in a row: a cut-off or garbled action is usually a runaway reply.
 			if retried {
-				return "", err
+				break
 			}
 			retried = true
 			a.history = append(a.history, message{"user", "Your last action was cut off or invalid. Output a shorter action; a reply must be at most three sentences."})
 			continue
 		}
+		retried = false
 		if act.Tool == "reply" {
 			return act.Message, nil
 		}
@@ -303,31 +303,12 @@ func (a *agent) window(budget int) []message {
 // projectTree lists the project's files, one per line, so the model never has
 // to guess a path. Large projects are cut off with a note to use glob.
 func projectTree(root string, limit int) string {
-	var files []string
-	more := 0
-	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if n := d.Name(); p != root && (strings.HasPrefix(n, ".") || n == "node_modules" || n == "__pycache__" || n == "vendor") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if len(files) >= limit {
-			more++
-			return nil
-		}
-		rel, _ := filepath.Rel(root, p)
-		files = append(files, rel)
-		return nil
-	})
+	files := projectFiles(root, 5000)
 	if len(files) == 0 {
 		return "(the project is empty)"
 	}
-	if more > 0 {
-		files = append(files, fmt.Sprintf("... and %d more (use glob to find them)", more))
+	if len(files) > limit {
+		files = append(files[:limit], fmt.Sprintf("... and %d more (use glob to find them)", len(files)-limit))
 	}
 	return strings.Join(files, "\n")
 }

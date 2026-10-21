@@ -25,8 +25,18 @@ func historyPath() string {
 
 func loadHistory(path string) *history {
 	h := &history{path: path}
-	if data, err := os.ReadFile(path); err == nil && path != "" {
-		h.lines = strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	data, err := os.ReadFile(path)
+	if err != nil || path == "" {
+		return h
+	}
+	for _, l := range strings.Split(string(data), "\n") {
+		if l != "" {
+			h.lines = append(h.lines, l)
+		}
+	}
+	if len(h.lines) > maxHistory {
+		h.lines = h.lines[len(h.lines)-maxHistory:]
+		os.WriteFile(path, []byte(strings.Join(h.lines, "\n")+"\n"), 0o600) // trim on load
 	}
 	return h
 }
@@ -37,10 +47,12 @@ func (h *history) add(line string) {
 		return
 	}
 	h.lines = append(h.lines, line)
-	if len(h.lines) > maxHistory {
-		h.lines = h.lines[len(h.lines)-maxHistory:]
+	if h.path == "" {
+		return
 	}
-	if h.path != "" {
-		os.WriteFile(h.path, []byte(strings.Join(h.lines, "\n")+"\n"), 0o600)
+	// Append rather than rewrite, so two sessions don't erase each other's lines.
+	if f, err := os.OpenFile(h.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		f.WriteString(line + "\n")
+		f.Close()
 	}
 }

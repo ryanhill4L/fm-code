@@ -24,6 +24,9 @@ type lineReader interface {
 	SupportsSuggestions() bool
 	// Remember adds a submitted prompt to the history that up-arrow browses.
 	Remember(line string)
+	// Answer reads a reply to a question such as "apply? [y/N]", without
+	// history or mode switching, so neither can change the answer by accident.
+	Answer(prompt string) (string, error)
 }
 
 // plainReader reads cooked lines from a pipe or a terminal without raw mode.
@@ -34,6 +37,8 @@ type plainReader struct {
 
 func (r plainReader) SupportsSuggestions() bool { return false }
 func (r plainReader) Remember(string)           {}
+
+func (r plainReader) Answer(prompt string) (string, error) { return r.ReadLine(prompt, nil) }
 
 func (r plainReader) ReadLine(prompt string, _ <-chan string) (string, error) {
 	fmt.Fprint(r.out, prompt)
@@ -75,6 +80,15 @@ func newTTYReader(in *os.File, out io.Writer) (*ttyReader, error) {
 
 func (r *ttyReader) SupportsSuggestions() bool { return true }
 func (r *ttyReader) Remember(line string)      { r.history.add(line) }
+
+func (r *ttyReader) Answer(prompt string) (string, error) {
+	restore, err := rawMode()
+	if err != nil {
+		return "", err
+	}
+	defer restore()
+	return edit(r.keys, r.out, prompt, nil, termWidth(), editOpts{})
+}
 
 func (r *ttyReader) ReadLine(prompt string, sugg <-chan string) (string, error) {
 	restore, err := rawMode()
