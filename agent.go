@@ -32,7 +32,8 @@ type toolSpec struct {
 }
 
 var toolSpecs = []toolSpec{
-	{"read_file", []string{"path"}, "show a file with line numbers"},
+	{"read_file", []string{"path"}, "show a file with line numbers (a long file shows its start and an outline)"},
+	{"read_lines", []string{"path", "start_line", "end_line"}, "show part of a long file"},
 	{"grep", []string{"pattern", "path"}, `regex search; path "." searches the whole project`},
 	{"list_dir", []string{"path"}, "list a directory"},
 	{"glob", []string{"pattern"}, "find files by name, e.g. **/*.go"},
@@ -74,6 +75,9 @@ func buildSchema(specs []toolSpec) map[string]any {
 		props := map[string]any{"tool": map[string]any{"type": "string", "enum": []string{t.name}}}
 		for _, arg := range t.args {
 			props[arg] = map[string]any{"type": "string"}
+			if strings.HasSuffix(arg, "_line") {
+				props[arg] = map[string]any{"type": "integer"}
+			}
 		}
 		order := append([]string{"tool"}, t.args...)
 		defs[t.name] = map[string]any{
