@@ -1,0 +1,30 @@
+# fm-code
+
+A small Go coding assistant that runs on the on-device Apple Foundation Model via the macOS `fm` command. No network, no API key.
+
+## Requirements
+
+- An Apple Silicon Mac with Apple Intelligence enabled and the `fm` command (`/usr/bin/fm`). Check with `fm available`.
+- Go 1.21+ to build.
+- **You must agree to the `fm` license first.** Run `fm license` once, read the terms and agree. fm-code checks `fm license --status` on startup and exits with instructions if you haven't. It never agrees on your behalf.
+
+## Quick start
+
+    go build -o fm-code .
+    ./fm-code                         # interactive session in the current directory
+    ./fm-code 'fix the typo in main.go'
+    ./fm-code -C ~/proj -yes 'add a doc comment to Foo'   # -yes skips edit confirmation
+
+Flags: `-C dir` project root, `-yes` auto-apply edits, `-v` print the model's raw actions.
+
+## How it works
+
+`fm respond` has no tool-calling, so fm-code starts `fm serve` on a private unix socket and constrains each model turn to a JSON action (an `anyOf` schema with one variant per tool). Go runs the tool and feeds the result back, until the model emits `reply`.
+
+Tools: `list_dir`, `read_file`, `grep`, `write_file`, `edit_file` (exact unique-snippet replace). Paths are confined to the project root, and writes/edits ask `[y/N]` unless `-yes`.
+
+The on-device model has a ~4k token window, so history is trimmed to the most recent ~7k characters and tool results are capped at 2.5k. Expect it to be best at small, focused edits.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Your use of the `fm` command and Apple Foundation Models is governed separately by Apple's terms.
