@@ -44,6 +44,8 @@ type toolbox struct {
 	// lockTests refuses changes to test files, for requests that didn't ask
 	// for test changes: told "the tests fail", the model tends to edit the test.
 	lockTests bool
+	// runTests reports whether checks may run the project's tests after an edit.
+	runTests func() bool
 }
 
 func (t *toolbox) resolve(p string) (string, error) {
@@ -55,16 +57,49 @@ func (t *toolbox) resolve(p string) (string, error) {
 		abs = filepath.Join(t.root, p)
 	}
 	abs = filepath.Clean(abs)
-	rel, err := filepath.Rel(t.root, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !within(t.root, abs) {
 		return "", fmt.Errorf("path %q is outside the working directory", p)
+	}
+	// A symlink inside the project can point anywhere: check where it really leads.
+	if real := realPath(abs); !within(t.root, real) {
+		return "", fmt.Errorf("path %q leads outside the working directory", p)
+	}
+	rel, _ := filepath.Rel(t.root, abs)
+	if rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q is inside .git, which fm-code doesn't touch", p)
 	}
 	return abs, nil
 }
 
+func exists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+func within(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// realPath resolves symlinks in p, or in its deepest existing parent when p
+// doesn't exist yet (a file about to be created).
+func realPath(p string) string {
+	for dir, rest := p, ""; ; {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
+}
+
 func (t *toolbox) run(a action) string {
 	if mutates(a.Tool) && a.Tool != "bash" && t.lockTests && isTestFile(a.Path) {
-		if _, err := os.Stat(filepath.Join(t.root, a.Path)); err == nil {
+		if p, err := t.resolve(a.Path); err == nil && exists(p) {
 			return "error: " + a.Path + " is a test file and the user didn't ask to change tests. Fix the code under test instead."
 		}
 	}
@@ -243,7 +278,11 @@ func outline(lines []string, after int) string {
 }
 
 func (t *toolbox) grep(a action) (string, error) {
-	re, err := regexp.Compile(a.Pattern)
+	pattern := a.Pattern
+	if strings.ToLower(pattern) == pattern {
+		pattern = "(?i)" + pattern // smart case: the model guesses "port" for PORT
+	}
+	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return "", fmt.Errorf("bad pattern: %v", err)
 	}
@@ -381,9 +420,7 @@ func (t *toolbox) bash(a action) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bashTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", "-c", pythonAlias()+a.Command)
-	cmd.Dir = t.root
-	out, err := cmd.CombinedOutput()
+	out, err := runLimited(ctx, t.root, "bash", "-c", pythonAlias()+a.Command)
 	res := string(out)
 	switch {
 	case ctx.Err() != nil:

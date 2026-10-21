@@ -107,7 +107,7 @@ func TestThinkPlansBeforeActing(t *testing.T) {
 
 func TestIsQuestion(t *testing.T) {
 	questions := []string{"what port does the server listen on?", "which file defines the User struct?", "list the TODO comments", "how many lines are in data.csv", "what files are in this directory? don't change anything", "Is there a Makefile target for lint?"}
-	tasks := []string{"fix the bug in calc.py", "where is MaxRetries used? change it to 5", "add a multiply function", "run the tests and fix the failing one", "the add function is wrong, fix it", "build the project and fix the compile error", "hi"}
+	tasks := []string{"can you append a newline to notes.txt", "do the TODO in util.go", "fix the bug in calc.py", "where is MaxRetries used? change it to 5", "add a multiply function", "run the tests and fix the failing one", "the add function is wrong, fix it", "build the project and fix the compile error", "hi"}
 	for _, q := range questions {
 		if !isQuestion(q) {
 			t.Errorf("%q should be a question", q)

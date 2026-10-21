@@ -205,3 +205,100 @@ func TestTestFilesLockedUnlessAsked(t *testing.T) {
 		t.Errorf("asking for a test should allow editing tests, got %q", got)
 	}
 }
+
+// editCase runs one edit_file on a fresh file and returns the tool result and the file.
+func editCase(t *testing.T, file, src, old, new string) (string, string) {
+	t.Helper()
+	box := newBox(t, true)
+	p := filepath.Join(box.root, file)
+	os.WriteFile(p, []byte(src), 0o644)
+	got := box.run(action{Tool: "edit_file", Path: file, OldText: old, NewText: new})
+	data, _ := os.ReadFile(p)
+	return got, string(data)
+}
+
+func TestBlockDeletionStaysInsideTheBlock(t *testing.T) {
+	cases := []struct{ name, src, old, want string }{
+		{"old_text ends in a newline", "func f() {\n}\nfunc g() {}\nfunc h() {\n\treturn\n}\n", "func f() {\n",
+			"func g() {}\nfunc h() {\n\treturn\n}\n"},
+		{"open brace in a string", "func f() {\n\ts := \"{\"\n\treturn\n}\nfunc g() {}\n", "func f() {",
+			"\nfunc g() {}\n"},
+		{"close brace in a string", "func f() {\n\ts := \"}\"\n\tx()\n}\nfunc g() {}\n", "func f() {",
+			"\nfunc g() {}\n"},
+		{"braces in a comment and a rune", "func f() {\n\t// {\n\tc := '}'\n}\nfunc g() {}\n", "func f() {",
+			"\nfunc g() {}\n"},
+	}
+	for _, c := range cases {
+		got, data := editCase(t, "f.go", c.src, c.old, "")
+		if data != c.want {
+			t.Errorf("%s: result %q\nfile %q\nwant %q", c.name, got, data, c.want)
+		}
+	}
+	src := "func f() {\n\tx()\n"
+	got, data := editCase(t, "f.go", src, "func f() {", "")
+	if data != src || !strings.Contains(got, "whole block") {
+		t.Errorf("unclosed block should be refused, got %q, file %q", got, data)
+	}
+}
+
+func TestRenameSkipsKeywordsStringsAndShortNames(t *testing.T) {
+	src := "a = True\nb = True\n"
+	if _, data := editCase(t, "k.py", src, "True", "False"); data == "a = False\nb = False\n" {
+		t.Errorf("True should not be renamed everywhere: %q", data)
+	}
+	src = "n = 1\nprint(\"\\n\", n)\n"
+	if _, data := editCase(t, "n.py", src, "n", "count"); strings.Contains(data, "\\count") {
+		t.Errorf("short name renamed inside a string: %q", data)
+	}
+	src = "total = 1\n# total here\nprint(\"total\", total)\n"
+	_, data := editCase(t, "t.py", src, "total", "amount")
+	if data != "amount = 1\n# total here\nprint(\"total\", amount)\n" {
+		t.Errorf("rename should skip strings and comments: %q", data)
+	}
+}
+
+func TestOneLineOldMultiLineNewKeepsFileIndent(t *testing.T) {
+	cases := []struct{ src, new, want string }{
+		{"def f():\n    return 1\n", "y = 1\n    return y", "def f():\n    y = 1\n    return y\n"},
+		{"def f():\n    if a:\n        return 1\n", "y = 1\n        return y", "def f():\n    if a:\n        y = 1\n        return y\n"},
+		{"def f():\n    return 1\n", "if a:\n    return 1", "def f():\n    if a:\n        return 1\n"},
+	}
+	for _, c := range cases {
+		if _, data := editCase(t, "f.py", c.src, "return 1", c.new); data != c.want {
+			t.Errorf("new %q:\ngot  %q\nwant %q", c.new, data, c.want)
+		}
+	}
+}
+
+func TestDeclarationWithNewBodyReplacesOldBody(t *testing.T) {
+	_, data := editCase(t, "a.py", "def a(x):\n    return x\n\n\ndef b():\n    return 2\n", "def a():", "def a(x, y):\n    return x + y")
+	if data != "def a(x, y):\n    return x + y\n\n\ndef b():\n    return 2\n" {
+		t.Errorf("python: %q", data)
+	}
+	_, data = editCase(t, "a.go", "package a\n\nfunc A() int {\n\treturn 1\n}\n", "func A() {", "func A() int {\n\treturn 2\n}")
+	if data != "package a\n\nfunc A() int {\n\treturn 2\n}\n" {
+		t.Errorf("go: %q", data)
+	}
+}
+
+func TestLineNumbersStrippedFromNewText(t *testing.T) {
+	if _, data := editCase(t, "n.txt", "alpha\nbeta\n", "1\talpha", "1\tALPHA"); data != "ALPHA\nbeta\n" {
+		t.Errorf("got %q", data)
+	}
+}
+
+func TestExactMatchRespectsWordBoundaries(t *testing.T) {
+	got, data := editCase(t, "m.py", "max = 1\n", "x = 1", "x = 2")
+	if data != "max = 1\n" || !strings.Contains(got, "not found") {
+		t.Errorf("result %q, file %q", got, data)
+	}
+	if _, data := editCase(t, "m.py", "max = 1\nx = 1\n", "x = 1", "x = 2"); data != "max = 1\nx = 2\n" {
+		t.Errorf("got %q", data)
+	}
+}
+
+func TestCRLFFilesKeepTheirLineEndings(t *testing.T) {
+	if _, data := editCase(t, "c.txt", "a\r\nb\r\nc\r\n", "  a\n  b", "A\nB"); data != "A\r\nB\r\nc\r\n" {
+		t.Errorf("got %q", data)
+	}
+}

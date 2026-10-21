@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -48,5 +49,23 @@ func TestHistoryPersists(t *testing.T) {
 	}
 	if got := strings.Join(loadHistory(path).lines, ","); got != "one,two,three" {
 		t.Errorf("reloaded history = %q", got)
+	}
+}
+
+func TestEmptyHistoryFileHasNoBlankEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hist")
+	os.WriteFile(path, nil, 0o600)
+	if h := loadHistory(path); len(h.lines) != 0 {
+		t.Errorf("got %q", h.lines)
+	}
+}
+
+func TestTwoSessionsKeepEachOthersHistory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hist")
+	a, b := loadHistory(path), loadHistory(path)
+	a.add("from a")
+	b.add("from b")
+	if got := strings.Join(loadHistory(path).lines, ","); got != "from a,from b" {
+		t.Errorf("got %q", got)
 	}
 }

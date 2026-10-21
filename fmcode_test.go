@@ -12,7 +12,7 @@ func newBox(t *testing.T, approve bool) *toolbox {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &toolbox{root: root, approve: func(action, string) bool { return approve }}
+	return &toolbox{root: root, approve: func(action, string) bool { return approve }, runTests: func() bool { return true }}
 }
 
 func TestEditFile(t *testing.T) {
