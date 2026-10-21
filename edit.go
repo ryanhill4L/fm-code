@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -227,6 +230,25 @@ func blockEnd(src string, start, end int) (int, bool) {
 	return pos, true
 }
 
+// locateJSON accepts an old_text that is the whole JSON document written
+// differently (the model tends to quote a pretty-printed file on one line),
+// and writes new_text in the file's indentation.
+func locateJSON(src, old, new string, notFound error) (start, end int, replacement string, err error) {
+	var file, quoted any
+	if json.Unmarshal([]byte(src), &file) != nil || json.Unmarshal([]byte(old), &quoted) != nil || !reflect.DeepEqual(file, quoted) {
+		return 0, 0, "", notFound
+	}
+	indent := "  "
+	if lines := strings.Split(src, "\n"); len(lines) > 1 && indentOf(lines[1]) != "" {
+		indent = indentOf(lines[1])
+	}
+	var out bytes.Buffer // json.Indent keeps the keys in the order written
+	if json.Indent(&out, []byte(new), "", indent) != nil {
+		return 0, 0, "", fmt.Errorf("new_text is not valid JSON")
+	}
+	return 0, len(strings.TrimRight(src, "\n")), out.String(), nil
+}
+
 func (t *toolbox) editFile(a action) (string, error) {
 	p, err := t.resolve(a.Path)
 	if err != nil {
@@ -254,6 +276,9 @@ func (t *toolbox) editFile(a action) (string, error) {
 		return t.rename(a, p, src, crlf)
 	}
 	start, end, newText, err := locate(src, a.OldText, a.NewText)
+	if err != nil && filepath.Ext(p) == ".json" {
+		start, end, newText, err = locateJSON(src, a.OldText, a.NewText, err)
+	}
 	if err != nil {
 		// Show the file so the next attempt can copy real lines instead of guessing again.
 		shown, _ := t.readFile(action{Path: a.Path})
