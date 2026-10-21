@@ -21,6 +21,7 @@ func main() {
 	noSuggest := flag.Bool("no-suggest", false, "don't suggest the next command (also falls back to plain line input)")
 	debug := flag.Bool("debug", false, "show each raw model action with its token counts, timing and context use")
 	verbose := flag.Bool("v", false, "same as -debug")
+	think := flag.Bool("think", false, "plan each request in a separate model call before acting")
 	tracePath := flag.String("trace", "", "append every model request and response to this JSONL file")
 	dir := flag.String("C", ".", "project directory the assistant may read and edit")
 	flag.Usage = func() {
@@ -82,7 +83,7 @@ func main() {
 		line, _ := rd.ReadLine("apply? [y/N] ", nil)
 		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y")
 	}}
-	ag := &agent{model: model, tools: tools, out: os.Stdout, debug: *debug || *verbose}
+	ag := &agent{model: model, tools: tools, out: os.Stdout, debug: *debug || *verbose, think: *think}
 
 	if prompt := strings.Join(flag.Args(), " "); prompt != "" {
 		if !turn(ag, prompt) {
