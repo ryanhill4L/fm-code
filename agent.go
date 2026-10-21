@@ -44,19 +44,51 @@ var toolSpecs = []toolSpec{
 	{"reply", []string{"message"}, "your final answer to the user, at most three sentences"},
 }
 
-var systemPrompt = buildPrompt(toolSpecs)
+var systemPrompt = buildPrompt(toolSpecs, "")
 
-func buildPrompt(specs []toolSpec) string {
+// readOnlySpecs are the tools for answering a question: everything but edits.
+var readOnlySpecs = func() []toolSpec {
+	var out []toolSpec
+	for _, t := range toolSpecs {
+		if !mutates(t.name) || t.name == "bash" {
+			out = append(out, t)
+		}
+	}
+	return out
+}()
+
+var questionPrompt = buildPrompt(readOnlySpecs, "- This request is a question. Answer it; don't change any files.\n- Use bash to run git, count files or lines, and run programs or tests.\n- Reply with the exact name, value or number that answers it.\n")
+
+var questionSchema = buildSchema(readOnlySpecs)
+
+var changeVerb = regexp.MustCompile(`\b(change|fix|add|remove|rename|set|update|delete|create|move|make|write|implement|refactor|replace|edit|convert|bump|sort|clean|build|install)\b`)
+var questionStart = regexp.MustCompile(`^(what|which|where|how|why|who|when|is|are|does|do|did|can|could|list|show|find|explain|tell|count)\b`)
+
+// isQuestion reports whether a request only asks for information.
+func isQuestion(input string) bool {
+	s := strings.ToLower(strings.TrimSpace(input))
+	if strings.Contains(s, "don't change") || strings.Contains(s, "do not change") {
+		return true
+	}
+	if changeVerb.MatchString(s) {
+		return false
+	}
+	return strings.HasSuffix(s, "?") || questionStart.MatchString(s)
+}
+
+func buildPrompt(specs []toolSpec, extraRules string) string {
 	var b strings.Builder
 	b.WriteString("You are fm-code, a coding assistant working in the user's project directory.\nEach turn, output one JSON action. Tools:\n")
 	for _, t := range specs {
 		fmt.Fprintf(&b, "- %s {%s}: %s\n", t.name, strings.Join(t.args, ", "), t.doc)
 	}
-	b.WriteString(`Rules:
-- Only use paths from the project file list below. Never invent a path.
-- Read a file before you change it, and change only what the user asked.
+	b.WriteString("Rules:\n- Only use paths from the project file list below. Never invent a path.\n")
+	if extraRules == "" {
+		extraRules = `- Read a file before you change it, and change only what the user asked.
 - After each change the harness checks the code and shows you the result. If the check fails, fix it.
-- When the task is done, or you have the answer, use reply. Don't keep exploring.`)
+`
+	}
+	b.WriteString(extraRules + "- When the task is done, or you have the answer, use reply. Don't keep exploring.")
 	return b.String()
 }
 
@@ -98,12 +130,14 @@ type completer interface {
 }
 
 type agent struct {
-	model   completer
-	tools   *toolbox
-	out     io.Writer
-	debug   bool      // print each raw action with its token counts and timing
-	think   bool      // plan each turn in a separate request before acting
-	history []message // excludes the system prompt
+	model completer
+	tools *toolbox
+	out   io.Writer
+	debug bool // print each raw action with its token counts and timing
+	think bool // plan each turn in a separate request before acting
+	// question is set for a turn that only asks something; it gets no edit tools.
+	question bool
+	history  []message // excludes the system prompt
 }
 
 // Send runs one user turn to completion and returns the final reply.
@@ -113,10 +147,19 @@ func (a *agent) Send(input string) (string, error) {
 	}
 	a.history = append(a.history, message{"user", input})
 	a.tools.read = nil // read-before-write is checked per turn; old reads may have scrolled out
-	seen := map[string]bool{}
+	a.tools.lockTests = !asksForTests.MatchString(strings.ToLower(input))
+	// A question gets a toolset without edits: given the chance, this model
+	// "answers" questions by changing the code it was asked about.
+	a.question = isQuestion(input)
+	schema := actionSchema
+	if a.question {
+		schema = questionSchema
+	}
+	seen := map[string]bool{}  // actions already tried since the files last changed
+	failed := map[string]int{} // failed edits per file and old_text
 	retried := false
 	for step := 0; step < maxSteps; step++ {
-		act, raw, err := a.next(actionSchema)
+		act, _, err := a.next(schema)
 		if err != nil {
 			// One retry: a cut-off or garbled action is usually a runaway reply.
 			if retried {
@@ -130,24 +173,34 @@ func (a *agent) Send(input string) (string, error) {
 			return act.Message, nil
 		}
 		fmt.Fprintf(a.out, "\n%s⏺ %s%s(%s%s%s)\n", green, act.Tool, reset, dim, describe(act), reset)
+		key := fmt.Sprintf("%#v", act) // the model shuffles JSON key order, so compare parsed actions
 		var result string
 		switch {
-		case seen[raw]:
-			result = "You already did exactly this and nothing has changed since. Do something different, or reply."
+		case seen[key]:
+			result = "error: you already did exactly this and nothing has changed since. Do something different, or reply."
 		case act.Tool == "bash" && echoOnly.MatchString(act.Command):
 			result = "echo only shows text to you, not the user. To tell the user something, use reply."
 		default:
 			result = a.tools.run(act)
 		}
-		if mutates(act.Tool) {
+		failedEdit := strings.HasPrefix(result, "error:") && act.Tool == "edit_file"
+		if mutates(act.Tool) && !strings.HasPrefix(result, "error:") {
 			clear(seen) // files may have changed, so repeating a read is legitimate again
 		}
-		seen[raw] = true
+		seen[key] = true
+		if a.question && !mutates(act.Tool) && !strings.HasPrefix(result, "error:") {
+			result += "\nIf this answers the question, reply now with the exact answer."
+		}
 		first, _, _ := strings.Cut(result, "\n")
 		fmt.Fprintf(a.out, "  %s⎿  %s%s\n", dim, clip(first, 70), reset)
 		a.history = append(a.history, message{"user", "Result of " + act.Tool + ":\n" + result})
+		if failedEdit {
+			if failed[act.Path]++; failed[act.Path] >= 3 {
+				break // stop burning steps on an edit the model can't land
+			}
+		}
 	}
-	// Out of steps: have the model report what it did rather than fail silently.
+	// Out of steps or stuck: have the model report what it did rather than fail silently.
 	a.history = append(a.history, message{"user", "Stop now. Tell the user in one or two sentences what you found or changed, and what is left."})
 	act, _, err := a.next(replySchema)
 	if err != nil || act.Tool != "reply" {
@@ -238,6 +291,9 @@ func (a *agent) complete(schema any) (completion, int, error) {
 
 func (a *agent) window(budget int) []message {
 	sys := systemPrompt
+	if a.question {
+		sys = questionPrompt
+	}
 	if a.tools != nil {
 		sys += "\n\nProject files (paths are relative to the project root):\n" + projectTree(a.tools.root, maxTreeEntries)
 	}
