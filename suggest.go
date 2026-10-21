@@ -28,7 +28,7 @@ var suggestSchema = map[string]any{
 // for the user's likely next command. It never touches the agent's own history.
 func suggestNext(ctx context.Context, model completer, history []message) (string, error) {
 	fork := append(append([]message(nil), history...), message{"user", suggestInstruction})
-	raw, err := model.complete(ctx, windowed(suggestPrompt, fork), suggestSchema)
+	raw, err := model.complete(ctx, windowed(suggestPrompt, fork, historyBudget), suggestSchema)
 	if err != nil {
 		return "", err
 	}
