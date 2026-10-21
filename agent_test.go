@@ -14,14 +14,14 @@ type scripted struct {
 	seen    [][]message
 }
 
-func (s *scripted) complete(_ context.Context, msgs []message, schema any) (string, error) {
+func (s *scripted) complete(_ context.Context, msgs []message, schema any) (completion, error) {
 	s.schemas = append(s.schemas, schema)
 	s.seen = append(s.seen, msgs)
 	r := s.replies[0]
 	if len(s.replies) > 1 {
 		s.replies = s.replies[1:]
 	}
-	return r, nil
+	return completion{Text: r}, nil
 }
 
 func TestSendBreaksLoopsAndForcesAReply(t *testing.T) {

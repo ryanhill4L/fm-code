@@ -81,8 +81,15 @@ func (s *fmServer) Close() {
 	os.RemoveAll(s.dir)
 }
 
+// completion is one model reply plus the token counts fm reports for it.
+type completion struct {
+	Text             string
+	PromptTokens     int
+	CompletionTokens int
+}
+
 // complete asks the model for a reply constrained to the given JSON schema.
-func (s *fmServer) complete(ctx context.Context, msgs []message, schema any) (string, error) {
+func (s *fmServer) complete(ctx context.Context, msgs []message, schema any) (completion, error) {
 	body, _ := json.Marshal(map[string]any{
 		"model":                 "system",
 		"stream":                false,
@@ -95,12 +102,12 @@ func (s *fmServer) complete(ctx context.Context, msgs []message, schema any) (st
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://fm/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return completion{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return "", err
+		return completion{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
@@ -108,18 +115,22 @@ func (s *fmServer) complete(ctx context.Context, msgs []message, schema any) (st
 		Choices []struct {
 			Message message `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
 		Error struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", fmt.Errorf("bad response from fm: %s", raw)
+		return completion{}, fmt.Errorf("bad response from fm: %s", raw)
 	}
 	if out.Error.Message != "" {
-		return "", fmt.Errorf("fm: %s", out.Error.Message)
+		return completion{}, fmt.Errorf("fm: %s", out.Error.Message)
 	}
 	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("fm returned no choices")
+		return completion{}, fmt.Errorf("fm returned no choices")
 	}
-	return out.Choices[0].Message.Content, nil
+	return completion{out.Choices[0].Message.Content, out.Usage.PromptTokens, out.Usage.CompletionTokens}, nil
 }

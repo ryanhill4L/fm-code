@@ -29,14 +29,16 @@ type traceEntry struct {
 	Schema   string    `json:"schema"`
 	Messages []message `json:"messages"`
 	Response string    `json:"response"`
+	Prompt   int       `json:"prompt_tokens"`
+	Reply    int       `json:"reply_tokens"`
 	Error    string    `json:"error,omitempty"`
 	Millis   int64     `json:"ms"`
 }
 
-func (t *tracer) complete(ctx context.Context, msgs []message, schema any) (string, error) {
+func (t *tracer) complete(ctx context.Context, msgs []message, schema any) (completion, error) {
 	start := time.Now()
 	out, err := t.next.complete(ctx, msgs, schema)
-	e := traceEntry{Time: start, Messages: msgs, Response: out, Millis: time.Since(start).Milliseconds()}
+	e := traceEntry{Time: start, Messages: msgs, Response: out.Text, Prompt: out.PromptTokens, Reply: out.CompletionTokens, Millis: time.Since(start).Milliseconds()}
 	if m, ok := schema.(map[string]any); ok {
 		e.Schema, _ = m["title"].(string)
 	}
