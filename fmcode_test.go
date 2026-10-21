@@ -26,7 +26,7 @@ func TestEditFile(t *testing.T) {
 	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "nope", NewText: "x"}); !strings.Contains(got, "not found") {
 		t.Errorf("missing text should fail, got %q", got)
 	}
-	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "one", NewText: "1"}); got != "edited a.txt" {
+	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "one", NewText: "1"}); !strings.HasPrefix(got, "edited a.txt\n") {
 		t.Errorf("got %q", got)
 	}
 	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "two", NewText: "three"}); !strings.HasPrefix(got, "renamed two to three in 2 places") {
