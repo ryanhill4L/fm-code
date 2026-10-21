@@ -18,9 +18,9 @@ func newBox(t *testing.T, approve bool) *toolbox {
 func TestEditFile(t *testing.T) {
 	box := newBox(t, true)
 	p := filepath.Join(box.root, "a.txt")
-	os.WriteFile(p, []byte("one\ntwo\ntwo\n"), 0o644)
+	os.WriteFile(p, []byte("one\ntwo 2\ntwo 2\n"), 0o644)
 
-	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "two", NewText: "x"}); !strings.Contains(got, "matches 2") {
+	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "two 2", NewText: "x"}); !strings.Contains(got, "matches 2") {
 		t.Errorf("ambiguous edit should fail, got %q", got)
 	}
 	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "nope", NewText: "x"}); !strings.Contains(got, "not found") {
@@ -29,7 +29,10 @@ func TestEditFile(t *testing.T) {
 	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "one", NewText: "1"}); got != "edited a.txt" {
 		t.Errorf("got %q", got)
 	}
-	if data, _ := os.ReadFile(p); string(data) != "1\ntwo\ntwo\n" {
+	if got := box.run(action{Tool: "edit_file", Path: "a.txt", OldText: "two", NewText: "three"}); !strings.HasPrefix(got, "renamed two to three in 2 places") {
+		t.Errorf("a bare identifier should be renamed everywhere, got %q", got)
+	}
+	if data, _ := os.ReadFile(p); string(data) != "1\nthree 2\nthree 2\n" {
 		t.Errorf("file = %q", data)
 	}
 }
@@ -76,7 +79,7 @@ func TestWindowKeepsLatestAndStartsOnUser(t *testing.T) {
 	a := &agent{}
 	big := strings.Repeat("x", historyBudget/2)
 	a.history = []message{{"user", "old"}, {"assistant", big}, {"user", big}, {"assistant", big}, {"user", "latest"}}
-	w := a.window()
+	w := a.window(historyBudget)
 	if w[0].Role != "system" || w[1].Role != "user" || w[len(w)-1].Content != "latest" {
 		t.Errorf("bad window: %v", w)
 	}

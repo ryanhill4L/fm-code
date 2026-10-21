@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+// maxReplyTokens bounds one model turn. Without it a degenerate reply can loop
+// for minutes; this still leaves room to write a whole small file.
+const maxReplyTokens = 1500
+
 type message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -55,7 +59,7 @@ func startFM() (*fmServer, error) {
 		return nil, err
 	}
 	s := &fmServer{cmd: cmd, dir: dir, client: &http.Client{
-		Timeout: 3 * time.Minute,
+		Timeout: 90 * time.Second,
 		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
 		}},
@@ -80,9 +84,10 @@ func (s *fmServer) Close() {
 // complete asks the model for a reply constrained to the given JSON schema.
 func (s *fmServer) complete(ctx context.Context, msgs []message, schema any) (string, error) {
 	body, _ := json.Marshal(map[string]any{
-		"model":    "system",
-		"stream":   false,
-		"messages": msgs,
+		"model":      "system",
+		"stream":     false,
+		"messages":   msgs,
+		"max_tokens": maxReplyTokens,
 		"response_format": map[string]any{
 			"type":        "json_schema",
 			"json_schema": map[string]any{"name": "Action", "schema": schema},
