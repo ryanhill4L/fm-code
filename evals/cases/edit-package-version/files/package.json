@@ -1,0 +1,6 @@
+{
+  "name": "widget",
+  "version": "1.2.0",
+  "scripts": { "test": "node test.js" },
+  "dependencies": { "express": "^4.18.0" }
+}

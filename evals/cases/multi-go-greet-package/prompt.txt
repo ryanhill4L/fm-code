@@ -1,0 +1,1 @@
+create a new Go package greet with a function Hello(name string) string that returns "Hello, <name>!", and use it from main.go to print Hello("Ryan")

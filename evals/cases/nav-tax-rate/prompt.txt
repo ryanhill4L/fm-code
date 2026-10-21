@@ -1,0 +1,1 @@
+the tax rate is 8%, change it to 10% wherever it's used

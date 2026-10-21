@@ -12,7 +12,7 @@ func newBox(t *testing.T, approve bool) *toolbox {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &toolbox{root: root, approve: func(string) bool { return approve }}
+	return &toolbox{root: root, approve: func(action, string) bool { return approve }}
 }
 
 func TestEditFile(t *testing.T) {
@@ -112,7 +112,7 @@ func TestBash(t *testing.T) {
 	if got := box.run(action{Tool: "bash", Command: "ls; exit 3"}); !strings.Contains(got, "f\n") || !strings.Contains(got, "exit status 3") {
 		t.Errorf("got %q", got)
 	}
-	box.approve = func(string) bool { return false }
+	box.approve = func(action, string) bool { return false }
 	if got := box.run(action{Tool: "bash", Command: "touch nope"}); !strings.Contains(got, "declined") {
 		t.Errorf("got %q", got)
 	}

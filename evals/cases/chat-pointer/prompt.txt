@@ -1,0 +1,1 @@
+briefly, what is a pointer in Go?

@@ -74,7 +74,7 @@ func TestEditRightArrowAcceptsSuggestion(t *testing.T) {
 		}
 	}()
 	var out bytes.Buffer
-	got, err := edit(keys, &out, "> ", sugg, 80)
+	got, err := edit(keys, &out, "> ", sugg, 80, editOpts{})
 	if err != nil || got != "Run the tests" {
 		t.Fatalf("got %q, %v", got, err)
 	}
@@ -93,7 +93,7 @@ func TestEditRightArrowIgnoredWhenTypingDiverges(t *testing.T) {
 			keys <- b
 		}
 	}()
-	got, _ := edit(keys, io.Discard, "> ", sugg, 80)
+	got, _ := edit(keys, io.Discard, "> ", sugg, 80, editOpts{})
 	if got != "hi" {
 		t.Errorf("got %q, want the typed text untouched", got)
 	}
@@ -110,19 +110,19 @@ func TestEditTypingBackspaceAndCompletion(t *testing.T) {
 			keys <- b
 		}
 	}()
-	if got, _ := edit(keys, io.Discard, "> ", sugg, 80); got != "Run the tests" {
+	if got, _ := edit(keys, io.Discard, "> ", sugg, 80, editOpts{}); got != "Run the tests" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestEditControlKeys(t *testing.T) {
-	if got, err := edit(keysOf("abc\x15x\r"), io.Discard, "> ", nil, 80); got != "x" || err != nil {
+	if got, err := edit(keysOf("abc\x15x\r"), io.Discard, "> ", nil, 80, editOpts{}); got != "x" || err != nil {
 		t.Errorf("Ctrl-U: got %q, %v", got, err)
 	}
-	if _, err := edit(keysOf("\x04"), io.Discard, "> ", nil, 80); err != io.EOF {
+	if _, err := edit(keysOf("\x04"), io.Discard, "> ", nil, 80, editOpts{}); err != io.EOF {
 		t.Errorf("Ctrl-D on empty line: err = %v", err)
 	}
-	if _, err := edit(keysOf("a\x03"), io.Discard, "> ", nil, 80); err != errInterrupt {
+	if _, err := edit(keysOf("a\x03"), io.Discard, "> ", nil, 80, editOpts{}); err != errInterrupt {
 		t.Errorf("Ctrl-C: err = %v", err)
 	}
 	// A bare Escape press (nothing follows it) must not swallow the next real key.
@@ -133,7 +133,7 @@ func TestEditControlKeys(t *testing.T) {
 		keys <- 'q'
 		keys <- '\r'
 	}()
-	if got, _ := edit(keys, io.Discard, "> ", nil, 80); got != "q" {
+	if got, _ := edit(keys, io.Discard, "> ", nil, 80, editOpts{}); got != "q" {
 		t.Errorf("bare escape: got %q", got)
 	}
 }
@@ -148,13 +148,13 @@ func TestEditAcceptsSS3RightArrow(t *testing.T) {
 			keys <- b
 		}
 	}()
-	if got, _ := edit(keys, io.Discard, "> ", sugg, 80); got != "Run the tests" {
+	if got, _ := edit(keys, io.Discard, "> ", sugg, 80, editOpts{}); got != "Run the tests" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestEditCtrlWDeletesWord(t *testing.T) {
-	if got, _ := edit(keysOf("fix the bug  \x17x\r"), io.Discard, "> ", nil, 80); got != "fix the x" {
+	if got, _ := edit(keysOf("fix the bug  \x17x\r"), io.Discard, "> ", nil, 80, editOpts{}); got != "fix the x" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -162,7 +162,7 @@ func TestEditCtrlWDeletesWord(t *testing.T) {
 func TestEditRedrawsWrappedInput(t *testing.T) {
 	var out bytes.Buffer
 	// "> " plus 20 characters fills two 10-column rows and starts a third.
-	got, _ := edit(keysOf(strings.Repeat("a", 20)+"\x7f\r"), &out, "\x1b[1m> \x1b[0m", nil, 10)
+	got, _ := edit(keysOf(strings.Repeat("a", 20)+"\x7f\r"), &out, "\x1b[1m> \x1b[0m", nil, 10, editOpts{})
 	if got != strings.Repeat("a", 19) {
 		t.Fatalf("got %q", got)
 	}
@@ -182,7 +182,7 @@ func TestEditClipsGhostTextToRow(t *testing.T) {
 		keys <- '\r'
 	}()
 	var out bytes.Buffer
-	edit(keys, &out, "> ", sugg, 10)
+	edit(keys, &out, "> ", sugg, 10, editOpts{})
 	if s := out.String(); strings.Contains(s, "Run the ") || !strings.Contains(s, "Run the") {
 		t.Errorf("ghost text should stop at the row's last free column: %q", s)
 	}

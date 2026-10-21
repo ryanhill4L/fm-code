@@ -1,0 +1,9 @@
+{
+  "app": "billing",
+  "db": {
+    "host": "db7.internal.example",
+    "port": 5432,
+    "name": "billing_prod"
+  },
+  "debug": false
+}

@@ -1,0 +1,1 @@
+change the run target in the Makefile so it runs main.py with --verbose

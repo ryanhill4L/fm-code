@@ -1,0 +1,1 @@
+add a docstring to the average function in stats.py

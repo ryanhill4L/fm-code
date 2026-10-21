@@ -1,0 +1,1 @@
+in config.py set DEBUG to False and TIMEOUT to 60

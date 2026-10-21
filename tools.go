@@ -38,7 +38,7 @@ const (
 // toolbox runs tools confined to root. Mutations go through approve.
 type toolbox struct {
 	root    string
-	approve func(summary string) bool
+	approve func(a action, summary string) bool
 }
 
 func (t *toolbox) resolve(p string) (string, error) {
@@ -204,7 +204,7 @@ func (t *toolbox) writeFile(a action) (string, error) {
 	if a.Path == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	if !t.approve(fmt.Sprintf("write %s (%d bytes)\n%s", a.Path, len(a.Content), preview(a.Content))) {
+	if !t.approve(a, fmt.Sprintf("write %s (%d bytes)\n%s", a.Path, len(a.Content), preview(a.Content))) {
 		return "", fmt.Errorf("user declined this change")
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -235,7 +235,7 @@ func (t *toolbox) editFile(a action) (string, error) {
 	case n > 1:
 		return "", fmt.Errorf("old_text matches %d places in %s; include more surrounding lines to make it unique", n, a.Path)
 	}
-	if !t.approve(fmt.Sprintf("edit %s\n%s", a.Path, diff(a.OldText, a.NewText))) {
+	if !t.approve(a, fmt.Sprintf("edit %s\n%s", a.Path, diff(a.OldText, a.NewText))) {
 		return "", fmt.Errorf("user declined this change")
 	}
 	if err := os.WriteFile(p, []byte(strings.Replace(src, a.OldText, a.NewText, 1)), 0o644); err != nil {
@@ -340,7 +340,7 @@ func (t *toolbox) bash(a action) (string, error) {
 	if strings.TrimSpace(a.Command) == "" {
 		return "", fmt.Errorf("command is required")
 	}
-	if !t.approve("run: " + a.Command) {
+	if !t.approve(a, "run: "+a.Command) {
 		return "", fmt.Errorf("user declined this command")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bashTimeout)

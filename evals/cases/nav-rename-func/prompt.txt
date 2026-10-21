@@ -1,0 +1,1 @@
+rename the function getUserName to fetchUserName everywhere

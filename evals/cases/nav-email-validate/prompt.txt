@@ -1,0 +1,1 @@
+find the function that validates emails and make it reject empty strings

@@ -1,0 +1,1 @@
+node index.js fails with 'greet is not a function', fix it

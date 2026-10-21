@@ -1,0 +1,1 @@
+add a count_words function to text.py and add a test for it in test_text.py, then run the tests

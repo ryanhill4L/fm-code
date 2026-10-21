@@ -1,0 +1,1 @@
+the mean function is wrong. fix the bug and run the tests to confirm

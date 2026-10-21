@@ -1,0 +1,1 @@
+node index.js prints total: $101.00 but the total with 10% tax should be $110.00

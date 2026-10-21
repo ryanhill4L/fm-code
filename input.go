@@ -22,6 +22,8 @@ type lineReader interface {
 	ReadLine(prompt string, sugg <-chan string) (string, error)
 	// SupportsSuggestions reports whether ReadLine can display suggestions.
 	SupportsSuggestions() bool
+	// Remember adds a submitted prompt to the history that up-arrow browses.
+	Remember(line string)
 }
 
 // plainReader reads cooked lines from a pipe or a terminal without raw mode.
@@ -31,6 +33,7 @@ type plainReader struct {
 }
 
 func (r plainReader) SupportsSuggestions() bool { return false }
+func (r plainReader) Remember(string)           {}
 
 func (r plainReader) ReadLine(prompt string, _ <-chan string) (string, error) {
 	fmt.Fprint(r.out, prompt)
@@ -41,8 +44,12 @@ func (r plainReader) ReadLine(prompt string, _ <-chan string) (string, error) {
 // ttyReader puts the terminal in raw mode while reading, so it can handle the
 // right arrow key.
 type ttyReader struct {
-	keys chan byte
-	out  io.Writer
+	keys    chan byte
+	out     io.Writer
+	history *history
+	// label and cycleMode show and change the permission mode (Shift+Tab).
+	label     func() string
+	cycleMode func() string
 }
 
 func newTTYReader(in *os.File, out io.Writer) (*ttyReader, error) {
@@ -51,7 +58,7 @@ func newTTYReader(in *os.File, out io.Writer) (*ttyReader, error) {
 		return nil, err
 	}
 	restore()
-	r := &ttyReader{keys: make(chan byte, 256), out: out}
+	r := &ttyReader{keys: make(chan byte, 256), out: out, history: loadHistory(historyPath())}
 	go func() {
 		defer close(r.keys)
 		b := make([]byte, 1)
@@ -67,6 +74,7 @@ func newTTYReader(in *os.File, out io.Writer) (*ttyReader, error) {
 }
 
 func (r *ttyReader) SupportsSuggestions() bool { return true }
+func (r *ttyReader) Remember(line string)      { r.history.add(line) }
 
 func (r *ttyReader) ReadLine(prompt string, sugg <-chan string) (string, error) {
 	restore, err := rawMode()
@@ -82,7 +90,11 @@ func (r *ttyReader) ReadLine(prompt string, sugg <-chan string) (string, error) 
 			drained = true
 		}
 	}
-	return edit(r.keys, r.out, prompt, sugg, termWidth())
+	opts := editOpts{history: r.history.lines, cycleMode: r.cycleMode}
+	if r.label != nil {
+		opts.label = r.label()
+	}
+	return edit(r.keys, r.out, prompt, sugg, termWidth(), opts)
 }
 
 // termWidth returns the terminal's width in columns, or 80 if it can't tell.
@@ -118,14 +130,25 @@ func rawMode() (restore func(), err error) {
 	return func() { stty(state) }, nil
 }
 
+// editOpts are the optional extras of a line editor session.
+type editOpts struct {
+	history   []string      // earlier inputs, oldest first, browsed with up and down
+	label     string        // shown before the prompt, e.g. the permission mode
+	cycleMode func() string // called on Shift+Tab; returns the new label
+}
+
 // edit is a minimal line editor: typing, backspace, Ctrl-U, Ctrl-W, Enter, Ctrl-D,
-// Ctrl-C, and right arrow to accept the current suggestion. width is the terminal's
+// Ctrl-C, right arrow to accept the current suggestion, up and down for history,
+// and Shift+Tab to cycle the permission mode. width is the terminal's
 // width in columns, used to redraw input that wraps onto several rows.
-func edit(keys <-chan byte, out io.Writer, prompt string, sugg <-chan string, width int) (string, error) {
+func edit(keys <-chan byte, out io.Writer, prompt string, sugg <-chan string, width int, opts editOpts) (string, error) {
 	var buf []byte
 	var suggestion string
+	prompt = opts.label + prompt
 	promptWidth := visibleWidth(prompt)
 	row := 0 // rows the cursor sits below the prompt's first row
+	// histPos indexes opts.history while browsing it; len(history) means the draft.
+	histPos, draft := len(opts.history), ""
 
 	render := func(final bool) {
 		if row > 0 {
@@ -185,9 +208,34 @@ func edit(keys <-chan byte, out io.Writer, prompt string, sugg <-chan string, wi
 				_, n := utf8.DecodeLastRune(buf)
 				buf = buf[:len(buf)-n]
 			case k == 27:
-				if readArrow(keys) == 'C' {
+				switch readArrow(keys) {
+				case 'C':
 					if rest, ok := strings.CutPrefix(suggestion, string(buf)); ok && rest != "" {
 						buf = []byte(suggestion)
+					}
+				case 'A':
+					if histPos > 0 {
+						if histPos == len(opts.history) {
+							draft = string(buf)
+						}
+						histPos--
+						buf = []byte(opts.history[histPos])
+					}
+				case 'B':
+					if histPos < len(opts.history) {
+						histPos++
+						if histPos == len(opts.history) {
+							buf = []byte(draft)
+						} else {
+							buf = []byte(opts.history[histPos])
+						}
+					}
+				case 'Z': // Shift+Tab
+					if opts.cycleMode != nil {
+						base := prompt[len(opts.label):]
+						opts.label = opts.cycleMode()
+						prompt = opts.label + base
+						promptWidth = visibleWidth(prompt)
 					}
 				}
 			case k >= 32 && k != 127:

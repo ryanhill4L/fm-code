@@ -1,0 +1,1 @@
+remove the function legacyFormat, it's not used anywhere
