@@ -125,7 +125,7 @@ func judgeCommand(ctx context.Context, model completer, cmd string) verdict {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	raw, err := model.complete(ctx, []message{{"system", judgePrompt}, {"user", "Command:\n" + cmd}}, judgeSchema)
+	c, err := model.complete(ctx, []message{{"system", judgePrompt}, {"user", "Command:\n" + cmd}}, judgeSchema)
 	if err != nil {
 		return verdict{false, "couldn't check it: " + err.Error()}
 	}
@@ -133,7 +133,7 @@ func judgeCommand(ctx context.Context, model completer, cmd string) verdict {
 		Reason  string `json:"reason"`
 		Verdict string `json:"verdict"`
 	}
-	if json.Unmarshal([]byte(raw), &out) != nil || out.Verdict != "safe" {
+	if json.Unmarshal([]byte(c.Text), &out) != nil || out.Verdict != "safe" {
 		return verdict{false, out.Reason}
 	}
 	return verdict{true, out.Reason}

@@ -14,9 +14,9 @@ type fakeModel struct {
 	got   []message
 }
 
-func (f *fakeModel) complete(_ context.Context, msgs []message, _ any) (string, error) {
+func (f *fakeModel) complete(_ context.Context, msgs []message, _ any) (completion, error) {
 	f.got = msgs
-	return f.reply, nil
+	return completion{Text: f.reply}, nil
 }
 
 func TestSuggestNextForksHistory(t *testing.T) {

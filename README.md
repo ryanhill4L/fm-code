@@ -40,7 +40,7 @@ In a session: `/clear` resets the conversation, `/help` lists commands, **â†‘/â†
 - **auto**: edits inside the project and safe commands (builds, tests, read-only tools, non-destructive git) run without asking. Commands that match a risky pattern always ask: deleting, `sudo`, network, installing, rewriting git history, or paths outside the project. Anything the rules can't classify goes to a separate model request. That request sees only the command, never the conversation, so nothing the agent read can talk it into approving.
 - **autopilot**: nothing asks. Same as `-yes`.
 
-Flags: `-C dir` project root, `-mode ask|auto|autopilot`, `-yes` (autopilot), `-no-suggest` disable next-command suggestions, `-v` print the model's raw actions, `-trace file.jsonl` record every model request and response for debugging, `-version`.
+Flags: `-C dir` project root, `-mode ask|auto|autopilot`, `-yes` (autopilot), `-no-suggest` disable next-command suggestions, `-debug` (or `/debug` in a session) show each raw model action with its prompt and reply token counts, latency and how much history fits the window, `-trace file.jsonl` record every model request and response in full, `-version`.
 
 ## How it works
 

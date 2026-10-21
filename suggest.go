@@ -28,14 +28,14 @@ var suggestSchema = map[string]any{
 // for the user's likely next command. It never touches the agent's own history.
 func suggestNext(ctx context.Context, model completer, history []message) (string, error) {
 	fork := append(append([]message(nil), history...), message{"user", suggestInstruction})
-	raw, err := model.complete(ctx, windowed(suggestPrompt, fork, historyBudget), suggestSchema)
+	c, err := model.complete(ctx, windowed(suggestPrompt, fork, historyBudget), suggestSchema)
 	if err != nil {
 		return "", err
 	}
 	var out struct {
 		Next string `json:"next"`
 	}
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+	if err := json.Unmarshal([]byte(c.Text), &out); err != nil {
 		return "", err
 	}
 	return cleanSuggestion(out.Next), nil

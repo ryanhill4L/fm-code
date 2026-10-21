@@ -19,11 +19,12 @@ func main() {
 	modeFlag := flag.String("mode", "ask", "permissions: ask (confirm every change), auto (ask only for risky commands) or autopilot (never ask); Shift+Tab cycles them")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	noSuggest := flag.Bool("no-suggest", false, "don't suggest the next command (also falls back to plain line input)")
-	verbose := flag.Bool("v", false, "print raw model actions")
+	debug := flag.Bool("debug", false, "show each raw model action with its token counts, timing and context use")
+	verbose := flag.Bool("v", false, "same as -debug")
 	tracePath := flag.String("trace", "", "append every model request and response to this JSONL file")
 	dir := flag.String("C", ".", "project directory the assistant may read and edit")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: fm-code [-C dir] [-mode ask|auto|autopilot] [-yes] [-no-suggest] [-trace file] [-v] [-version] [prompt]\n\nWithout a prompt, starts an interactive session.")
+		fmt.Fprintln(os.Stderr, "usage: fm-code [-C dir] [-mode ask|auto|autopilot] [-yes] [-no-suggest] [-debug] [-trace file] [-v] [-version] [prompt]\n\nWithout a prompt, starts an interactive session.")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -81,7 +82,7 @@ func main() {
 		line, _ := rd.ReadLine("apply? [y/N] ", nil)
 		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y")
 	}}
-	ag := &agent{model: model, tools: tools, out: os.Stdout, verbose: *verbose}
+	ag := &agent{model: model, tools: tools, out: os.Stdout, debug: *debug || *verbose}
 
 	if prompt := strings.Join(flag.Args(), " "); prompt != "" {
 		if !turn(ag, prompt) {
@@ -106,8 +107,11 @@ func main() {
 		case text == "/clear":
 			ag.history = nil
 			fmt.Printf("%s⏺ Conversation cleared%s\n", green, reset)
+		case text == "/debug":
+			ag.debug = !ag.debug
+			fmt.Printf("%s⏺ Debug output %s%s\n", green, map[bool]string{true: "on", false: "off"}[ag.debug], reset)
 		case text == "/help":
-			fmt.Println("  /clear  reset the conversation (do this often: the model's memory is tiny)\n  /help   show this help\n  exit    quit\n  →       accept the suggested next command shown in grey\n  ↑ ↓     browse earlier prompts\n  ⇧Tab    cycle permission mode: ask → auto (only risky commands ask) → autopilot (nothing asks)")
+			fmt.Println("  /clear  reset the conversation (do this often: the model's memory is tiny)\n  /debug  toggle showing raw model actions, token counts and timing\n  /help   show this help\n  exit    quit\n  →       accept the suggested next command shown in grey\n  ↑ ↓     browse earlier prompts\n  ⇧Tab    cycle permission mode: ask → auto (only risky commands ask) → autopilot (nothing asks)")
 		case strings.HasPrefix(text, "/"):
 			fmt.Printf("%s⏺ unknown command %s (try /help)%s\n", red, text, reset)
 		case text != "":

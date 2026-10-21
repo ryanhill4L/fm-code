@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -89,14 +90,14 @@ func buildSchema(specs []toolSpec) map[string]any {
 }
 
 type completer interface {
-	complete(ctx context.Context, msgs []message, schema any) (string, error)
+	complete(ctx context.Context, msgs []message, schema any) (completion, error)
 }
 
 type agent struct {
 	model   completer
 	tools   *toolbox
 	out     io.Writer
-	verbose bool
+	debug   bool      // print each raw action with its token counts and timing
 	history []message // excludes the system prompt
 }
 
@@ -150,12 +151,18 @@ func (a *agent) Send(input string) (string, error) {
 // next asks the model for one action and records it in the history.
 func (a *agent) next(schema any) (action, string, error) {
 	var act action
-	raw, err := a.complete(schema)
+	start := time.Now()
+	c, kept, err := a.complete(schema)
+	raw := c.Text
+	if a.debug {
+		fmt.Fprintf(a.out, "%s  ⋯ %d prompt + %d reply tokens of ~8k · %.1fs · %d/%d messages in window%s\n",
+			dim, c.PromptTokens, c.CompletionTokens, time.Since(start).Seconds(), kept, len(a.history), reset)
+		if raw != "" {
+			fmt.Fprintf(a.out, "%s  %s%s\n", dim, raw, reset)
+		}
+	}
 	if err != nil {
 		return act, raw, err
-	}
-	if a.verbose {
-		fmt.Fprintf(a.out, "%s%s%s\n", dim, raw, reset)
 	}
 	if err := json.Unmarshal([]byte(raw), &act); err != nil {
 		return act, raw, fmt.Errorf("model produced invalid action %q: %v", clip(raw, 200), err)
@@ -171,13 +178,15 @@ func mutates(tool string) bool {
 }
 
 // complete asks for the next action, retrying with less history if the
-// prompt overflows the model's context.
-func (a *agent) complete(schema any) (string, error) {
+// prompt overflows the model's context. It also returns how many history
+// messages fit in the window.
+func (a *agent) complete(schema any) (completion, int, error) {
 	budget := historyBudget
 	for {
-		raw, err := a.model.complete(context.Background(), a.window(budget), schema)
+		w := a.window(budget)
+		c, err := a.model.complete(context.Background(), w, schema)
 		if err == nil || !strings.Contains(err.Error(), "context size") || budget < 4000 {
-			return raw, err
+			return c, len(w) - 1, err
 		}
 		budget /= 2
 	}
