@@ -9,15 +9,23 @@ import (
 	"strings"
 )
 
+// version is set at release time with -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	yes := flag.Bool("yes", false, "apply edits without asking for confirmation")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	verbose := flag.Bool("v", false, "print raw model actions")
 	dir := flag.String("C", ".", "project directory the assistant may read and edit")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: fm-code [-C dir] [-yes] [prompt]\n\nWithout a prompt, starts an interactive session.")
+		fmt.Fprintln(os.Stderr, "usage: fm-code [-C dir] [-yes] [-v] [-version] [prompt]\n\nWithout a prompt, starts an interactive session.")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("fm-code", version)
+		return
+	}
 
 	root, err := absDir(*dir)
 	if err != nil {

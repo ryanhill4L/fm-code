@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go vet ./... && go test ./...
+      - name: Build darwin/arm64
+        run: |
+          # fm needs Apple silicon, so arm64 is the only target.
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o fm-code .
+          tar -czf fm-code_darwin_arm64.tar.gz fm-code LICENSE README.md
+          shasum -a 256 fm-code_darwin_arm64.tar.gz > checksums.txt
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" fm-code_darwin_arm64.tar.gz checksums.txt \
+            --title "$GITHUB_REF_NAME" --generate-notes

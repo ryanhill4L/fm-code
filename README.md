@@ -5,19 +5,34 @@ A small Go coding assistant that runs on the on-device Apple Foundation Model vi
 ## Requirements
 
 - An Apple Silicon Mac with Apple Intelligence enabled and the `fm` command (`/usr/bin/fm`). Check with `fm available`.
-- Go 1.21+ to build.
+- Go 1.21+, only if you build from source.
 - **You must agree to the `fm` license first.** Run `fm license` once, read the terms and agree. fm-code checks `fm license --status` on startup and exits with instructions if you haven't. It never agrees on your behalf.
 
-## Quick start
+## Install
 
-    go build -o fm-code .
-    ./fm-code                         # interactive session in the current directory
-    ./fm-code 'fix the typo in main.go'
-    ./fm-code -C ~/proj -yes 'add a doc comment to Foo'   # -yes skips edit confirmation
+One-line install (downloads the latest release, verifies its checksum, installs to `~/.local/bin`):
+
+    curl -fsSL https://raw.githubusercontent.com/ryanhill4L/fm-code/main/install.sh | bash
+
+Or with Go:
+
+    go install github.com/ryanhill4L/fm-code@latest
+
+Or from a clone:
+
+    make install        # PREFIX=/usr/local make install to change the location
+
+Then agree to the `fm` license (see above) and run `fm-code`. The installer never agrees on your behalf.
+
+## Usage
+
+    fm-code                         # interactive session in the current directory
+    fm-code 'fix the typo in main.go'
+    fm-code -C ~/proj -yes 'add a doc comment to Foo'   # -yes skips edit confirmation
 
 In a session: `/clear` resets the conversation (worth doing often, since the model's memory is tiny), `/help` lists commands, `exit` or Ctrl-D quits.
 
-Flags: `-C dir` project root, `-yes` auto-apply edits, `-v` print the model's raw actions.
+Flags: `-C dir` project root, `-yes` auto-apply edits, `-v` print the model's raw actions, `-version`.
 
 ## How it works
 
