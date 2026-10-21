@@ -80,7 +80,7 @@ func TestEditsAreChecked(t *testing.T) {
 	if got := box.run(action{Tool: "write_file", Path: "c.json", Content: "{"}); !strings.Contains(got, "not valid JSON") {
 		t.Errorf("got %q", got)
 	}
-	if got := box.run(action{Tool: "write_file", Path: "notes.txt", Content: "hi"}); strings.Contains(got, "check") {
+	if got := box.run(action{Tool: "write_file", Path: "notes.txt", Content: "hi"}); strings.Contains(got, "check") || !strings.Contains(got, "reply now") {
 		t.Errorf("plain text has no checker, got %q", got)
 	}
 }
