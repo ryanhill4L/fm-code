@@ -84,10 +84,10 @@ func (s *fmServer) Close() {
 // complete asks the model for a reply constrained to the given JSON schema.
 func (s *fmServer) complete(ctx context.Context, msgs []message, schema any) (string, error) {
 	body, _ := json.Marshal(map[string]any{
-		"model":      "system",
-		"stream":     false,
-		"messages":   msgs,
-		"max_tokens": maxReplyTokens,
+		"model":                 "system",
+		"stream":                false,
+		"messages":              msgs,
+		"max_completion_tokens": maxReplyTokens, // fm ignores max_tokens
 		"response_format": map[string]any{
 			"type":        "json_schema",
 			"json_schema": map[string]any{"name": "Action", "schema": schema},
