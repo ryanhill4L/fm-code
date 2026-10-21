@@ -1,0 +1,1 @@
+node avg.js prints 0.4 but the average should be 2.5

@@ -1,0 +1,1 @@
+write hello.py that prints the sum of 1 to 10, then run it

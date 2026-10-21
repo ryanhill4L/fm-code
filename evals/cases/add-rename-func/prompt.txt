@@ -1,0 +1,1 @@
+rename the calc function to computeTotal everywhere it is used

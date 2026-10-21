@@ -1,0 +1,1 @@
+read config.json and tell me the db host

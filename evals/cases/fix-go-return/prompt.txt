@@ -1,0 +1,1 @@
+abs in util.go returns negative numbers for negative input

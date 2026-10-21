@@ -1,0 +1,1 @@
+rename the company from Acme to Zenith in index.html and about.txt

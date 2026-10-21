@@ -1,0 +1,1 @@
+add a Usage section to the README explaining you run it with python3 app.py

@@ -1,0 +1,1 @@
+bump the version in package.json to 1.3.0

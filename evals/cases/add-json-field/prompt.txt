@@ -1,0 +1,1 @@
+add a "debug": true field to config.json

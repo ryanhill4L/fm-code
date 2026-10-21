@@ -1,0 +1,1 @@
+prices should show two decimals. python3 price.py prints $4.5 instead of $4.50

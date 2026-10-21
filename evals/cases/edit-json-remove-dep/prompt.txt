@@ -1,0 +1,1 @@
+remove the lodash dependency from package.json

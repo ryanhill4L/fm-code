@@ -1,0 +1,1 @@
+python3 main.py prints perimeter: 11 but with width 3 and height 4 it should be 14

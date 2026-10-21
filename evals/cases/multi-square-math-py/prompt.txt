@@ -1,0 +1,1 @@
+add a function square to math.py and call it from main.py to print square(4)

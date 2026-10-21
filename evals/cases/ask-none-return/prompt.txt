@@ -1,0 +1,1 @@
+what does load_config return when the file is missing?

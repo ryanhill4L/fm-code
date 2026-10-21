@@ -1,0 +1,1 @@
+go run . prints top=1 but it should print top=3

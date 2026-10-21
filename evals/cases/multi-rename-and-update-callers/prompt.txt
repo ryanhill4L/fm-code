@@ -1,0 +1,1 @@
+rename the function calc to total in calc.go and update every place that calls it

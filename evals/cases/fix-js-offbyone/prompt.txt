@@ -1,0 +1,1 @@
+node sum.js prints NaN, fix it

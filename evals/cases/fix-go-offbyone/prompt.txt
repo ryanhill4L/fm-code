@@ -1,0 +1,1 @@
+sum() in main.go skips the last element, can you fix it

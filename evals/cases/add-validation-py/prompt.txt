@@ -1,0 +1,1 @@
+make factorial in mathx.py raise a ValueError for negative numbers

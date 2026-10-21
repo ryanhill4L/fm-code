@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,13 +15,15 @@ import (
 var version = "dev"
 
 func main() {
-	yes := flag.Bool("yes", false, "apply edits without asking for confirmation")
+	yes := flag.Bool("yes", false, "same as -mode autopilot")
+	modeFlag := flag.String("mode", "ask", "permissions: ask (confirm every change), auto (ask only for risky commands) or autopilot (never ask); Shift+Tab cycles them")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	noSuggest := flag.Bool("no-suggest", false, "don't suggest the next command (also falls back to plain line input)")
 	verbose := flag.Bool("v", false, "print raw model actions")
+	tracePath := flag.String("trace", "", "append every model request and response to this JSONL file")
 	dir := flag.String("C", ".", "project directory the assistant may read and edit")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: fm-code [-C dir] [-yes] [-no-suggest] [-v] [-version] [prompt]\n\nWithout a prompt, starts an interactive session.")
+		fmt.Fprintln(os.Stderr, "usage: fm-code [-C dir] [-mode ask|auto|autopilot] [-yes] [-no-suggest] [-trace file] [-v] [-version] [prompt]\n\nWithout a prompt, starts an interactive session.")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -29,6 +32,13 @@ func main() {
 		return
 	}
 
+	mode, err := parseMode(*modeFlag)
+	if err != nil {
+		fatal(err)
+	}
+	if *yes {
+		mode = modeAutopilot
+	}
 	root, err := absDir(*dir)
 	if err != nil {
 		fatal(err)
@@ -38,17 +48,40 @@ func main() {
 		fatal(err)
 	}
 	defer srv.Close()
+	var model completer = srv
+	if *tracePath != "" {
+		tr, err := newTracer(srv, *tracePath)
+		if err != nil {
+			fatal(err)
+		}
+		model = tr
+	}
 
 	rd := newReader(!*noSuggest)
-	tools := &toolbox{root: root, approve: func(summary string) bool {
+	if tr, ok := rd.(*ttyReader); ok {
+		tr.label = func() string { return mode.label() }
+		tr.cycleMode = func() string { mode = mode.next(); return mode.label() }
+	}
+	tools := &toolbox{root: root, approve: func(a action, summary string) bool {
 		fmt.Printf("\n%s\n", summary)
-		if *yes {
+		switch mode {
+		case modeAutopilot:
 			return true
+		case modeAuto:
+			if a.Tool != "bash" {
+				return true // edits stay inside the project root
+			}
+			v := judgeCommand(context.Background(), model, a.Command)
+			if v.safe {
+				fmt.Printf("%s(auto: %s)%s\n", dim, v.reason, reset)
+				return true
+			}
+			fmt.Printf("%s⚠ auto mode held this command: %s%s\n", yellow, v.reason, reset)
 		}
 		line, _ := rd.ReadLine("apply? [y/N] ", nil)
 		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y")
 	}}
-	ag := &agent{model: srv, tools: tools, out: os.Stdout, verbose: *verbose}
+	ag := &agent{model: model, tools: tools, out: os.Stdout, verbose: *verbose}
 
 	if prompt := strings.Join(flag.Args(), " "); prompt != "" {
 		if !turn(ag, prompt) {
@@ -74,10 +107,11 @@ func main() {
 			ag.history = nil
 			fmt.Printf("%s⏺ Conversation cleared%s\n", green, reset)
 		case text == "/help":
-			fmt.Println("  /clear  reset the conversation (do this often: the model's memory is tiny)\n  /help   show this help\n  exit    quit\n  →       accept the suggested next command shown in grey")
+			fmt.Println("  /clear  reset the conversation (do this often: the model's memory is tiny)\n  /help   show this help\n  exit    quit\n  →       accept the suggested next command shown in grey\n  ↑ ↓     browse earlier prompts\n  ⇧Tab    cycle permission mode: ask → auto (only risky commands ask) → autopilot (nothing asks)")
 		case strings.HasPrefix(text, "/"):
 			fmt.Printf("%s⏺ unknown command %s (try /help)%s\n", red, text, reset)
 		case text != "":
+			rd.Remember(text)
 			turn(ag, text)
 		}
 		if err != nil {
@@ -85,7 +119,7 @@ func main() {
 		}
 		pending = nil
 		if rd.SupportsSuggestions() && len(ag.history) > 0 {
-			pending, cancelSuggestion = startSuggestion(srv, ag.history)
+			pending, cancelSuggestion = startSuggestion(model, ag.history)
 		}
 	}
 }

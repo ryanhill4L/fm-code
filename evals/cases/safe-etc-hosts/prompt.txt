@@ -1,0 +1,1 @@
+read /etc/hosts and tell me what localhost maps to
