@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // action is one model turn: a tool name plus whichever arguments that tool uses.
@@ -21,13 +24,15 @@ type action struct {
 	StartLine int    `json:"start_line"`
 	EndLine   int    `json:"end_line"`
 	Message   string `json:"message"`
+	Command   string `json:"command"`
 }
 
-var toolNames = []string{"list_dir", "read_file", "grep", "write_file", "edit_file", "reply"}
+var toolNames = []string{"list_dir", "read_file", "glob", "grep", "write_file", "edit_file", "bash", "reply"}
 
 const (
 	maxReadLines   = 200
 	maxResultChars = 2500
+	bashTimeout    = 30 * time.Second
 )
 
 // toolbox runs tools confined to root. Mutations go through approve.
@@ -35,8 +40,6 @@ type toolbox struct {
 	root    string
 	approve func(summary string) bool
 }
-
-func isMutation(tool string) bool { return tool == "write_file" || tool == "edit_file" }
 
 func (t *toolbox) resolve(p string) (string, error) {
 	if p == "" {
@@ -62,8 +65,12 @@ func (t *toolbox) run(a action) string {
 		out, err = t.listDir(a)
 	case "read_file":
 		out, err = t.readFile(a)
+	case "glob":
+		out, err = t.glob(a)
 	case "grep":
 		out, err = t.grep(a)
+	case "bash":
+		out, err = t.bash(a)
 	case "write_file":
 		out, err = t.writeFile(a)
 	case "edit_file":
@@ -268,4 +275,88 @@ func absDir(p string) (string, error) {
 		return "", fmt.Errorf("%s is not a directory", p)
 	}
 	return abs, nil
+}
+
+// globRegexp turns a glob with ** support into an anchored regexp.
+func globRegexp(pattern string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; {
+		case strings.HasPrefix(pattern[i:], "**/"):
+			b.WriteString("(.*/)?")
+			i += 2
+		case strings.HasPrefix(pattern[i:], "**"):
+			b.WriteString(".*")
+			i++
+		case c == '*':
+			b.WriteString("[^/]*")
+		case c == '?':
+			b.WriteString("[^/]")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
+}
+
+func (t *toolbox) glob(a action) (string, error) {
+	re, err := globRegexp(a.Pattern)
+	if err != nil {
+		return "", fmt.Errorf("bad pattern: %v", err)
+	}
+	base, err := t.resolve(a.Path)
+	if err != nil {
+		return "", err
+	}
+	var matches []string
+	filepath.WalkDir(base, func(p string, d os.DirEntry, err error) error {
+		if err != nil || len(matches) >= 100 {
+			return filepath.SkipDir
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" || d.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(base, p)
+		// A bare pattern like "*.go" matches at any depth, as people expect.
+		if re.MatchString(rel) || (!strings.Contains(a.Pattern, "/") && re.MatchString(d.Name())) {
+			shown, _ := filepath.Rel(t.root, p)
+			matches = append(matches, shown)
+		}
+		return nil
+	})
+	if len(matches) == 0 {
+		return "no matches", nil
+	}
+	sort.Strings(matches)
+	return strings.Join(matches, "\n"), nil
+}
+
+func (t *toolbox) bash(a action) (string, error) {
+	if strings.TrimSpace(a.Command) == "" {
+		return "", fmt.Errorf("command is required")
+	}
+	if !t.approve("run: " + a.Command) {
+		return "", fmt.Errorf("user declined this command")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bashTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", "-c", a.Command)
+	cmd.Dir = t.root
+	out, err := cmd.CombinedOutput()
+	res := string(out)
+	switch {
+	case ctx.Err() != nil:
+		res += fmt.Sprintf("\n[timed out after %s]", bashTimeout)
+	case err != nil:
+		res += fmt.Sprintf("\n[%v]", err)
+	}
+	if strings.TrimSpace(res) == "" {
+		return "(no output)", nil
+	}
+	return res, nil
 }

@@ -84,3 +84,39 @@ func TestWindowKeepsLatestAndStartsOnUser(t *testing.T) {
 		t.Error("expected old messages to be dropped")
 	}
 }
+
+func TestGlob(t *testing.T) {
+	box := newBox(t, true)
+	for _, f := range []string{"a.go", "sub/b.go", "sub/deep/c.go", "sub/d.txt", ".git/e.go"} {
+		p := filepath.Join(box.root, f)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, nil, 0o644)
+	}
+	cases := map[string]string{
+		"*.go":        "a.go\nsub/b.go\nsub/deep/c.go",
+		"**/*.go":     "a.go\nsub/b.go\nsub/deep/c.go",
+		"sub/*.go":    "sub/b.go",
+		"sub/**/*.go": "sub/b.go\nsub/deep/c.go",
+		"*.rs":        "no matches",
+	}
+	for pat, want := range cases {
+		if got := box.run(action{Tool: "glob", Pattern: pat}); got != want {
+			t.Errorf("glob %q = %q, want %q", pat, got, want)
+		}
+	}
+}
+
+func TestBash(t *testing.T) {
+	box := newBox(t, true)
+	os.WriteFile(filepath.Join(box.root, "f"), nil, 0o644)
+	if got := box.run(action{Tool: "bash", Command: "ls; exit 3"}); !strings.Contains(got, "f\n") || !strings.Contains(got, "exit status 3") {
+		t.Errorf("got %q", got)
+	}
+	box.approve = func(string) bool { return false }
+	if got := box.run(action{Tool: "bash", Command: "touch nope"}); !strings.Contains(got, "declined") {
+		t.Errorf("got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(box.root, "nope")); err == nil {
+		t.Error("declined command ran anyway")
+	}
+}

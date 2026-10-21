@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 const (
@@ -16,7 +17,9 @@ const systemPrompt = `You are fm-code, a coding assistant working in the user's 
 Each turn you must output one JSON action. Tools:
 - list_dir {path}: list a directory
 - read_file {path, start_line?, end_line?}: read a file with line numbers
+- glob {pattern}: find files by pattern, e.g. **/*.go
 - grep {pattern, path?}: regex search across files
+- bash {command}: run a shell command, e.g. to run tests
 - write_file {path, content}: create or overwrite a file
 - edit_file {path, old_text, new_text}: replace one exact, unique snippet in a file
 - reply {message}: give your final answer to the user
@@ -28,7 +31,9 @@ Rules: look before you edit (read_file first). Never guess file contents. After 
 var actionSchema = buildSchema(map[string][]string{
 	"list_dir":   {"path"},
 	"read_file":  {"path"},
+	"glob":       {"pattern"},
 	"grep":       {"pattern", "path"},
+	"bash":       {"command"},
 	"write_file": {"path", "content"},
 	"edit_file":  {"path", "old_text", "new_text"},
 	"reply":      {"message"},
@@ -88,8 +93,10 @@ func (a *agent) Send(input string) (string, error) {
 		if act.Tool == "reply" {
 			return act.Message, nil
 		}
-		fmt.Fprintf(a.out, "\x1b[2m→ %s\x1b[0m\n", describe(act))
+		fmt.Fprintf(a.out, "\n%s⏺ %s%s(%s%s%s)\n", green, act.Tool, reset, dim, describe(act), reset)
 		result := a.tools.run(act)
+		first, _, _ := strings.Cut(result, "\n")
+		fmt.Fprintf(a.out, "  %s⎿  %s%s\n", dim, clip(first, 70), reset)
 		a.history = append(a.history, message{"user", "Result of " + act.Tool + ":\n" + result})
 	}
 	return "", fmt.Errorf("stopped after %d steps without a final reply", maxSteps)
@@ -113,11 +120,32 @@ func (a *agent) window() []message {
 	return append([]message{{"system", systemPrompt}}, a.history[start:]...)
 }
 
+// describe is the short argument preview shown next to a tool call.
 func describe(a action) string {
 	switch a.Tool {
 	case "grep":
-		return fmt.Sprintf("grep %q %s", a.Pattern, a.Path)
+		return clip(fmt.Sprintf("%s in %s", a.Pattern, a.Path), 60)
+	case "glob":
+		return clip(a.Pattern, 60)
+	case "bash":
+		return clip(a.Command, 60)
 	default:
-		return a.Tool + " " + a.Path
+		return clip(a.Path, 60)
 	}
 }
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+const (
+	reset = "\x1b[0m"
+	bold  = "\x1b[1m"
+	dim   = "\x1b[2m"
+	green = "\x1b[32m"
+	cyan  = "\x1b[36m"
+	red   = "\x1b[31m"
+)

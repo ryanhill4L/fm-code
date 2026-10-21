@@ -48,11 +48,21 @@ func main() {
 		}
 		return
 	}
-	fmt.Printf("fm-code in %s (Ctrl-D to quit)\n", root)
+	fmt.Printf("%s%s⏺ fm-code%s in %s. /help for commands, Ctrl-D to quit.\n", bold, green, reset, root)
 	for {
-		fmt.Print("\n> ")
+		fmt.Printf("\n%s%s❯%s ", bold, cyan, reset)
 		line, err := in.ReadString('\n')
-		if text := strings.TrimSpace(line); text != "" {
+		switch text := strings.TrimSpace(line); {
+		case text == "exit" || text == "/exit":
+			return
+		case text == "/clear":
+			ag.history = nil
+			fmt.Printf("%s⏺ Conversation cleared%s\n", green, reset)
+		case text == "/help":
+			fmt.Println("  /clear  reset the conversation (do this often: the model's memory is tiny)\n  /help   show this help\n  exit    quit")
+		case strings.HasPrefix(text, "/"):
+			fmt.Printf("%s⏺ unknown command %s (try /help)%s\n", red, text, reset)
+		case text != "":
 			turn(ag, text)
 		}
 		if err != nil {
@@ -64,10 +74,10 @@ func main() {
 func turn(ag *agent, text string) bool {
 	reply, err := ag.Send(text)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintf(os.Stderr, "\n%s⏺ Error: %v%s\n", red, err, reset)
 		return false
 	}
-	fmt.Println("\n" + reply)
+	fmt.Printf("\n%s⏺%s %s\n", cyan, reset, reply)
 	return true
 }
 

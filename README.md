@@ -15,13 +15,15 @@ A small Go coding assistant that runs on the on-device Apple Foundation Model vi
     ./fm-code 'fix the typo in main.go'
     ./fm-code -C ~/proj -yes 'add a doc comment to Foo'   # -yes skips edit confirmation
 
+In a session: `/clear` resets the conversation (worth doing often, since the model's memory is tiny), `/help` lists commands, `exit` or Ctrl-D quits.
+
 Flags: `-C dir` project root, `-yes` auto-apply edits, `-v` print the model's raw actions.
 
 ## How it works
 
 `fm respond` has no tool-calling, so fm-code starts `fm serve` on a private unix socket and constrains each model turn to a JSON action (an `anyOf` schema with one variant per tool). Go runs the tool and feeds the result back, until the model emits `reply`.
 
-Tools: `list_dir`, `read_file`, `grep`, `write_file`, `edit_file` (exact unique-snippet replace). Paths are confined to the project root, and writes/edits ask `[y/N]` unless `-yes`.
+Tools: `list_dir`, `read_file`, `glob` (supports `**`), `grep`, `write_file`, `edit_file` (exact unique-snippet replace) and `bash` (30s timeout, runs in the project root). Paths are confined to the project root. Writes, edits and shell commands ask `[y/N]` unless `-yes`. `bash` is not sandboxed, so a command can still touch anything you can.
 
 The on-device model has a ~4k token window, so history is trimmed to the most recent ~7k characters and tool results are capped at 2.5k. Expect it to be best at small, focused edits.
 
