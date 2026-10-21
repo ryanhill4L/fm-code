@@ -123,11 +123,85 @@ func TestLongFileShowsHeadAndOutline(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(box.root, "big.go"), []byte(src.String()), 0o644)
 	got := box.run(action{Tool: "read_file", Path: "big.go"})
-	if !strings.Contains(got, "[showing lines 1-60 of 202. Use read_lines to see more.]") || !strings.Contains(got, "199\tfunc F39()") {
+	if !strings.Contains(got, "[showing lines 1-60 of 201. Use read_lines to see more.]") || !strings.Contains(got, "199\tfunc F39()") {
 		t.Errorf("got %q", got)
 	}
 	got = box.run(action{Tool: "read_lines", Path: "big.go", StartLine: 199, EndLine: 201})
-	if got != "199\tfunc F39() {\n200\t\tprintln(39)\n201\t}\n[showing lines 199-201 of 202. Use read_lines to see more.]\n" {
+	if got != "199\tfunc F39() {\n200\t\tprintln(39)\n201\t}\n" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestRenameReportsOtherFiles(t *testing.T) {
+	box := newBox(t, true)
+	os.WriteFile(filepath.Join(box.root, "a.py"), []byte("def calc():\n    return 1\n\nprint(calc())\n"), 0o644)
+	os.WriteFile(filepath.Join(box.root, "b.py"), []byte("from a import calc\n"), 0o644)
+	got := box.run(action{Tool: "edit_file", Path: "a.py", OldText: "calc", NewText: "total"})
+	if !strings.Contains(got, "rename it in these files too:\nb.py:1: from a import calc") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBashHasPython(t *testing.T) {
+	box := newBox(t, true)
+	if got := box.run(action{Tool: "bash", Command: "python -c 'print(6*7)'"}); !strings.HasPrefix(got, "42") {
+		t.Errorf("got %q", got)
+	}
+}
+
+// Each case is a real failing edit from the v2 eval traces.
+func TestEditFallbacksFromTraces(t *testing.T) {
+	cases := []struct {
+		name, file, src, old, new, want string
+	}{
+		{"misquoted declaration deletes the whole function", "u.py",
+			"def keep():\n    return 1\n\n\ndef old_helper(x):\n    y = x * 2\n    return y\n\n\ndef other():\n    return 3\n",
+			"def old_helper():", "",
+			"def keep():\n    return 1\n\n\n\ndef other():\n    return 3\n"},
+		{"brace block deleted with its header", "f.go",
+			"package f\n\nfunc legacyFormat(s string) string {\n\tif s == \"\" {\n\t\treturn \"-\"\n\t}\n\treturn s\n}\n\nfunc Keep() {}\n",
+			"func legacyFormat(name string) string {", "",
+			"package f\n\n\n\nfunc Keep() {}\n"},
+		{"non-adjacent lines edited in place", "config.py",
+			"DEBUG = True\nHOST = \"x\"\nTIMEOUT = 30\n",
+			"DEBUG = True\nTIMEOUT = 30", "DEBUG = False\nTIMEOUT = 60",
+			"DEBUG = False\nHOST = \"x\"\nTIMEOUT = 60\n"},
+		{"line numbers copied from read_file", "n.txt",
+			"apple\nmango\n", "2\tmango", "kiwi",
+			"apple\nkiwi\n"},
+		{"empty old_text appends", ".gitignore",
+			"node_modules/\n", "", ".env",
+			"node_modules/\n.env\n"},
+	}
+	for _, c := range cases {
+		box := newBox(t, true)
+		p := filepath.Join(box.root, c.file)
+		os.WriteFile(p, []byte(c.src), 0o644)
+		got := box.run(action{Tool: "edit_file", Path: c.file, OldText: c.old, NewText: c.new})
+		if data, _ := os.ReadFile(p); string(data) != c.want {
+			t.Errorf("%s: result %q\nfile %q\nwant %q", c.name, got, data, c.want)
+		}
+	}
+}
+
+func TestMissedEditNamesClosestLine(t *testing.T) {
+	box := newBox(t, true)
+	os.WriteFile(filepath.Join(box.root, "m.go"), []byte("package m\n\nconst greeting = \"hello, \" + name\n"), 0o644)
+	got := box.run(action{Tool: "edit_file", Path: "m.go", OldText: "const greeting = \"hello \" + name", NewText: "x"})
+	if !strings.Contains(got, "the closest line is 3: const greeting = \"hello, \" + name") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTestFilesLockedUnlessAsked(t *testing.T) {
+	box := newBox(t, true)
+	os.WriteFile(filepath.Join(box.root, "calc_test.go"), []byte("package calc\n"), 0o644)
+	box.lockTests = !asksForTests.MatchString("run the tests and fix the failing one")
+	if got := box.run(action{Tool: "append_file", Path: "calc_test.go", Content: "// x"}); !strings.Contains(got, "Fix the code under test") {
+		t.Errorf("got %q", got)
+	}
+	box.lockTests = !asksForTests.MatchString("add a test for reverse()")
+	if got := box.run(action{Tool: "append_file", Path: "calc_test.go", Content: "// x"}); !strings.HasPrefix(got, "appended") {
+		t.Errorf("asking for a test should allow editing tests, got %q", got)
 	}
 }

@@ -45,13 +45,18 @@ def signatures(run, case):
     if "old_text not found" in plain:
         sig["edit old_text not found"] += 1
     if "stopped after" in plain:
-        sig["hit step cap"] += 1
+        sig["hit step cap (error)"] += 1
     if tools and tools[-1] != "reply" and "stopped after" not in plain:
         sig["no final reply"] += 1
     if "write_file" in tools:
         sig["used write_file"] += 1
-    if any(t in ("edit_file", "write_file") for t in tools) and "bash" not in tools:
-        sig["edited but never ran anything"] += 1
+    results = "".join(m["content"] for line in open(path) for m in json.loads(line).get("messages", [])[-1:])
+    if "check FAILED" in results:
+        sig["a post-edit check failed"] += 1
+    if "you already did exactly this" in results:
+        sig["repeated an action"] += 1
+    if "Stop now. Tell the user" in results:
+        sig["hit step cap (forced reply)"] += 1
     if tools and tools[0] == "reply" and len(tools) == 1:
         sig["replied without tools"] += 1
     return sig

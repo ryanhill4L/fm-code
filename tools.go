@@ -41,6 +41,9 @@ type toolbox struct {
 	root    string
 	approve func(a action, summary string) bool
 	read    map[string]bool // files read this session; write_file may only replace those
+	// lockTests refuses changes to test files, for requests that didn't ask
+	// for test changes: told "the tests fail", the model tends to edit the test.
+	lockTests bool
 }
 
 func (t *toolbox) resolve(p string) (string, error) {
@@ -60,6 +63,11 @@ func (t *toolbox) resolve(p string) (string, error) {
 }
 
 func (t *toolbox) run(a action) string {
+	if mutates(a.Tool) && a.Tool != "bash" && t.lockTests && isTestFile(a.Path) {
+		if _, err := os.Stat(filepath.Join(t.root, a.Path)); err == nil {
+			return "error: " + a.Path + " is a test file and the user didn't ask to change tests. Fix the code under test instead."
+		}
+	}
 	var out string
 	var err error
 	switch a.Tool {
@@ -73,10 +81,10 @@ func (t *toolbox) run(a action) string {
 		out, err = t.grep(a)
 	case "bash":
 		out, err = t.bash(a)
-	case "write_file":
-		out, err = t.writeFile(a)
 	case "edit_file":
 		out, err = t.editFile(a)
+	case "write_file":
+		out, err = t.writeFile(a)
 	case "append_file":
 		out, err = t.appendFile(a)
 	default:
@@ -93,6 +101,12 @@ func (t *toolbox) run(a action) string {
 
 // scrub rewrites absolute project paths as relative ones. The model copies
 // whatever it sees, and temp-dir paths send it off on tangents.
+var testFile = regexp.MustCompile(`(_test\.go|^test_.*\.py|_test\.py|\.test\.[jt]s|\.spec\.[jt]s)$`)
+
+func isTestFile(p string) bool { return testFile.MatchString(filepath.Base(p)) }
+
+var asksForTests = regexp.MustCompile(`\b(add|write|create|new|update|change|edit|extend)\b[\w\s]{0,20}\btests?\b|\btests? for\b`)
+
 func (t *toolbox) scrub(s string) string {
 	s = strings.ReplaceAll(s, t.root+string(filepath.Separator), "")
 	return strings.ReplaceAll(s, t.root, ".")
@@ -181,7 +195,7 @@ func (t *toolbox) readFile(a action) (string, error) {
 		return "", err
 	}
 	t.markRead(p)
-	lines := strings.Split(string(data), "\n")
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	start, end := 1, len(lines)
 	if a.StartLine > 0 {
 		start = a.StartLine
@@ -346,6 +360,18 @@ func (t *toolbox) glob(a action) (string, error) {
 	return strings.Join(matches, "\n"), nil
 }
 
+// pythonAlias makes `python` mean python3 on systems that only have python3,
+// because the model reaches for `python` first and gives up when it's missing.
+func pythonAlias() string {
+	if _, err := exec.LookPath("python"); err == nil {
+		return ""
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		return ""
+	}
+	return `python() { python3 "$@"; }; `
+}
+
 func (t *toolbox) bash(a action) (string, error) {
 	if strings.TrimSpace(a.Command) == "" {
 		return "", fmt.Errorf("command is required")
@@ -355,7 +381,7 @@ func (t *toolbox) bash(a action) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bashTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", "-c", a.Command)
+	cmd := exec.CommandContext(ctx, "bash", "-c", pythonAlias()+a.Command)
 	cmd.Dir = t.root
 	out, err := cmd.CombinedOutput()
 	res := string(out)

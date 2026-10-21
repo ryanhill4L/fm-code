@@ -48,7 +48,7 @@ func TestSendBreaksLoopsAndForcesAReply(t *testing.T) {
 	if !containsKey(results, "echo only shows text to you") {
 		t.Error("echo should be answered with a nudge to reply, not run")
 	}
-	if !containsKey(results, "You already did exactly this") {
+	if !containsKey(results, "you already did exactly this") {
 		t.Error("a repeated action should be refused")
 	}
 	if last := m.schemas[len(m.schemas)-1]; last == nil || len(last.(map[string]any)["anyOf"].([]any)) != 1 {
@@ -102,5 +102,53 @@ func TestThinkPlansBeforeActing(t *testing.T) {
 	}
 	if m.schemas[0].(map[string]any)["title"] != "Plan" {
 		t.Error("first request should be the plan")
+	}
+}
+
+func TestIsQuestion(t *testing.T) {
+	questions := []string{"what port does the server listen on?", "which file defines the User struct?", "list the TODO comments", "how many lines are in data.csv", "what files are in this directory? don't change anything", "Is there a Makefile target for lint?"}
+	tasks := []string{"fix the bug in calc.py", "where is MaxRetries used? change it to 5", "add a multiply function", "run the tests and fix the failing one", "the add function is wrong, fix it", "build the project and fix the compile error", "hi"}
+	for _, q := range questions {
+		if !isQuestion(q) {
+			t.Errorf("%q should be a question", q)
+		}
+	}
+	for _, q := range tasks {
+		if isQuestion(q) {
+			t.Errorf("%q should not be a question", q)
+		}
+	}
+}
+
+func TestQuestionsGetNoEditTools(t *testing.T) {
+	m := &scripted{replies: []string{`{"tool":"reply","message":"8123"}`}}
+	a := &agent{model: m, tools: newBox(t, true), out: io.Discard}
+	a.Send("what port does the server listen on?")
+	defs := m.schemas[0].(map[string]any)["$defs"].(map[string]any)
+	for _, banned := range []string{"edit_file", "write_file", "append_file"} {
+		if defs[banned] != nil || strings.Contains(m.seen[0][0].Content, "- "+banned+" {") {
+			t.Errorf("a question should not offer %s", banned)
+		}
+	}
+	if defs["bash"] == nil {
+		t.Error("a question should still be able to run commands")
+	}
+}
+
+func TestRepeatedFailedEditStops(t *testing.T) {
+	box := newBox(t, true)
+	box.run(action{Tool: "write_file", Path: "c.py", Content: "x = 1\n"})
+	bad := `{"tool":"edit_file","path":"c.py","old_text":"y = 2","new_text":"y = 3"}`
+	shuffled := `{"new_text":"y = 3","old_text":"y = 2","path":"c.py","tool":"edit_file"}`
+	m := &scripted{replies: []string{bad, shuffled, bad, `{"tool":"reply","message":"gave up"}`}}
+	a := &agent{model: m, tools: box, out: io.Discard}
+	if got, _ := a.Send("set y to 3"); got != "gave up" {
+		t.Fatalf("got %q", got)
+	}
+	if !containsKey(map[string]bool{a.history[4].Content: true}, "you already did exactly this") {
+		t.Errorf("the same edit with shuffled keys should count as a repeat: %q", a.history[4].Content)
+	}
+	if len(m.schemas) != 4 || len(m.schemas[3].(map[string]any)["anyOf"].([]any)) != 1 {
+		t.Errorf("after three failed edits the model should be made to reply, got %d requests", len(m.schemas))
 	}
 }

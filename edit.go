@@ -24,7 +24,11 @@ func (t *toolbox) rename(a action, p, src string) (string, error) {
 		return "", err
 	}
 	t.markRead(p)
-	return fmt.Sprintf("renamed %s to %s in %d places in %s", a.OldText, a.NewText, n, a.Path) + t.check(p), nil
+	msg := fmt.Sprintf("renamed %s to %s in %d places in %s", a.OldText, a.NewText, n, a.Path)
+	if hits, _ := t.grep(action{Pattern: `\b` + a.OldText + `\b`}); hits != "no matches" {
+		msg += "\n" + a.OldText + " is still used here; rename it in these files too:\n" + hits
+	}
+	return msg + t.check(p), nil
 }
 
 func (t *toolbox) appendFile(a action) (string, error) {
@@ -87,6 +91,36 @@ func (t *toolbox) writeFile(a action) (string, error) {
 	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), a.Path) + t.check(p), nil
 }
 
+// blockEnd extends a match that is a single block-opening line (ending in ":"
+// or "{") to the end of that block: by indentation for ":" and by brace depth
+// for "{". Other matches are returned unchanged.
+func blockEnd(src string, start, end int) int {
+	header := strings.TrimSpace(src[start:end])
+	if strings.Contains(header, "\n") || !(strings.HasSuffix(header, ":") || strings.HasSuffix(header, "{")) {
+		return end
+	}
+	lineStart := strings.LastIndex(src[:start], "\n") + 1
+	indent := indentOf(src[lineStart:])
+	pos, depth := end, strings.Count(header, "{")-strings.Count(header, "}")
+	for pos < len(src) {
+		next := strings.IndexByte(src[pos+1:], '\n')
+		if next < 0 {
+			next = len(src) - pos - 1
+		}
+		line := src[pos+1 : pos+1+next]
+		if strings.HasSuffix(header, "{") {
+			if depth <= 0 {
+				break
+			}
+			depth += strings.Count(line, "{") - strings.Count(line, "}")
+		} else if strings.TrimSpace(line) != "" && len(indentOf(line)) <= len(indent) {
+			break
+		}
+		pos += 1 + next
+	}
+	return pos
+}
+
 func (t *toolbox) editFile(a action) (string, error) {
 	p, err := t.resolve(a.Path)
 	if err != nil {
@@ -95,6 +129,9 @@ func (t *toolbox) editFile(a action) (string, error) {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return "", err
+	}
+	if strings.TrimSpace(a.OldText) == "" && strings.TrimSpace(a.NewText) != "" {
+		return t.appendFile(action{Tool: "append_file", Path: a.Path, Content: a.NewText}) // what an empty old_text means
 	}
 	if a.OldText == a.NewText {
 		return "", fmt.Errorf("old_text and new_text are the same, so there is nothing to change. If the task is done, reply")
@@ -108,6 +145,9 @@ func (t *toolbox) editFile(a action) (string, error) {
 		// Show the file so the next attempt can copy real lines instead of guessing again.
 		shown, _ := t.readFile(action{Path: a.Path})
 		return "", fmt.Errorf("%v in %s. Here is the file:\n%s", err, a.Path, shown)
+	}
+	if strings.TrimSpace(newText) == "" {
+		end = blockEnd(src, start, end) // deleting a def/func header means deleting its body too
 	}
 	if !t.approve(a, fmt.Sprintf("edit %s\n%s", a.Path, diff(src[start:end], newText))) {
 		return "", fmt.Errorf("user declined this change")
@@ -153,6 +193,7 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 	if strings.TrimSpace(old) == "" {
 		return 0, 0, "", fmt.Errorf("old_text is required")
 	}
+	old = stripLineNumbers(old)
 	switch n := strings.Count(src, old); {
 	case n > 1:
 		return 0, 0, "", fmt.Errorf("old_text matches %d places; include more surrounding lines to make it unique", n)
@@ -194,21 +235,150 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 		}
 	}
 	if found < 0 {
-		return 0, 0, "", fmt.Errorf("old_text not found; read the file again and copy the lines exactly")
+		if start, end, repl, ok := matchDeclaration(lines, want, new); ok {
+			return start, end, repl, nil
+		}
+		if start, end, repl, ok := matchLineSet(lines, want, new); ok {
+			return start, end, repl, nil
+		}
+		return 0, 0, "", fmt.Errorf("old_text not found%s; read the file again and copy the lines exactly", closestLine(lines, want[0]))
 	}
-	for _, l := range lines[:found] {
+	start, end = lineSpan(lines, found, found+len(want))
+	return start, end, indentLines(dedent(new), indentOf(lines[found])), nil
+}
+
+// lineSpan is the byte range of lines[from:to], without the final newline.
+func lineSpan(lines []string, from, to int) (start, end int) {
+	for _, l := range lines[:from] {
 		start += len(l)
 	}
 	end = start
-	for _, l := range lines[found : found+len(want)] {
+	for _, l := range lines[from:to] {
 		end += len(l)
 	}
-	if strings.HasSuffix(src[start:end], "\n") {
+	if to > from && strings.HasSuffix(lines[to-1], "\n") {
 		end--
 	}
-	first := lines[found]
-	indent := first[:len(first)-len(strings.TrimLeft(first, " \t"))]
-	return start, end, indentLines(dedent(new), indent), nil
+	return start, end
+}
+
+func indentOf(line string) string { return line[:len(line)-len(strings.TrimLeft(line, " \t"))] }
+
+var lineNumber = regexp.MustCompile(`^\s*\d+(\t|\\t)`)
+
+// stripLineNumbers removes "12\t" prefixes copied from read_file output, but
+// only when every line has one.
+func stripLineNumbers(s string) string {
+	lines := strings.Split(s, "\n")
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" && !lineNumber.MatchString(l) {
+			return s
+		}
+	}
+	for i, l := range lines {
+		lines[i] = lineNumber.ReplaceAllString(l, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+var declName = regexp.MustCompile(`^\s*(?:export\s+)?(?:async\s+)?(?:def|func|function|class|type)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)`)
+
+// matchDeclaration handles a one-line old_text that misquotes a declaration,
+// e.g. "def old_helper():" for "def old_helper(x):": the name picks the line.
+func matchDeclaration(lines, want []string, new string) (start, end int, repl string, ok bool) {
+	m := declName.FindStringSubmatch(want[0])
+	if len(want) != 1 || m == nil {
+		return 0, 0, "", false
+	}
+	found := -1
+	for i, l := range lines {
+		if d := declName.FindStringSubmatch(l); d != nil && d[1] == m[1] {
+			if found >= 0 {
+				return 0, 0, "", false
+			}
+			found = i
+		}
+	}
+	if found < 0 {
+		return 0, 0, "", false
+	}
+	start, end = lineSpan(lines, found, found+1)
+	return start, end, indentLines(dedent(new), indentOf(lines[found])), true
+}
+
+// matchLineSet handles old_text whose lines each appear once in the file but
+// not next to each other, e.g. two settings with another between them. With
+// as many new lines as old ones, each line is replaced in place.
+func matchLineSet(lines, want []string, new string) (start, end int, repl string, ok bool) {
+	newLines := strings.Split(strings.Trim(new, "\n"), "\n")
+	if len(want) < 2 || len(newLines) != len(want) {
+		return 0, 0, "", false
+	}
+	at := make([]int, len(want))
+	for j, w := range want {
+		at[j] = -1
+		for i, l := range lines {
+			if strings.TrimSpace(l) == strings.TrimSpace(w) && strings.TrimSpace(w) != "" {
+				if at[j] >= 0 {
+					return 0, 0, "", false
+				}
+				at[j] = i
+			}
+		}
+		if at[j] < 0 || (j > 0 && at[j] <= at[j-1]) {
+			return 0, 0, "", false
+		}
+	}
+	span := append([]string(nil), lines[at[0]:at[len(at)-1]+1]...)
+	for j, i := range at {
+		l := span[i-at[0]]
+		nl := ""
+		if strings.HasSuffix(l, "\n") {
+			nl = "\n"
+		}
+		span[i-at[0]] = indentOf(l) + strings.TrimSpace(newLines[j]) + nl
+	}
+	start, end = lineSpan(lines, at[0], at[len(at)-1]+1)
+	return start, end, strings.TrimSuffix(strings.Join(span, ""), "\n"), true
+}
+
+// closestLine names the file line most like want, as a hint after a miss.
+func closestLine(lines []string, want string) string {
+	want = strings.TrimSpace(want)
+	best, bestScore := -1, 0.6
+	for i, l := range lines {
+		if s := similarity(strings.TrimSpace(l), want); s > bestScore {
+			best, bestScore = i, s
+		}
+	}
+	if best < 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (the closest line is %d: %s)", best+1, strings.TrimSpace(lines[best]))
+}
+
+// similarity is 1 minus the edit distance over the longer length.
+func similarity(a, b string) float64 {
+	if a == "" || b == "" {
+		return 0
+	}
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return 1 - float64(prev[len(b)])/float64(max(len(a), len(b)))
 }
 
 func startsIndented(s string) bool { return strings.HasPrefix(s, " ") || strings.HasPrefix(s, "\t") }
