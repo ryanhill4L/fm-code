@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,6 +110,24 @@ func TestFailedEditShowsTheFile(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 	if got := box.run(action{Tool: "edit_file", Path: "c.go", OldText: "x", NewText: "x"}); !strings.Contains(got, "nothing to change") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestLongFileShowsHeadAndOutline(t *testing.T) {
+	box := newBox(t, true)
+	var src strings.Builder
+	src.WriteString("package big\n")
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&src, "\n// F%d does things.\nfunc F%d() {\n\tprintln(%d)\n}\n", i, i, i)
+	}
+	os.WriteFile(filepath.Join(box.root, "big.go"), []byte(src.String()), 0o644)
+	got := box.run(action{Tool: "read_file", Path: "big.go"})
+	if !strings.Contains(got, "[showing lines 1-60 of 202. Use read_lines to see more.]") || !strings.Contains(got, "199\tfunc F39()") {
+		t.Errorf("got %q", got)
+	}
+	got = box.run(action{Tool: "read_lines", Path: "big.go", StartLine: 199, EndLine: 201})
+	if got != "199\tfunc F39() {\n200\t\tprintln(39)\n201\t}\n[showing lines 199-201 of 202. Use read_lines to see more.]\n" {
 		t.Errorf("got %q", got)
 	}
 }
