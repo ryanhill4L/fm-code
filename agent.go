@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,7 +64,7 @@ func buildSchema(tools map[string][]string) map[string]any {
 }
 
 type completer interface {
-	complete(msgs []message, schema any) (string, error)
+	complete(ctx context.Context, msgs []message, schema any) (string, error)
 }
 
 type agent struct {
@@ -78,7 +79,7 @@ type agent struct {
 func (a *agent) Send(input string) (string, error) {
 	a.history = append(a.history, message{"user", input})
 	for step := 0; step < maxSteps; step++ {
-		raw, err := a.model.complete(a.window(), actionSchema)
+		raw, err := a.model.complete(context.Background(), a.window(), actionSchema)
 		if err != nil {
 			return "", err
 		}
@@ -102,22 +103,24 @@ func (a *agent) Send(input string) (string, error) {
 	return "", fmt.Errorf("stopped after %d steps without a final reply", maxSteps)
 }
 
-// window returns the system prompt plus as many recent messages as fit the budget.
+func (a *agent) window() []message { return windowed(systemPrompt, a.history) }
+
+// windowed returns sys plus as many recent messages as fit the budget.
 // It always keeps the latest message, and never starts on an orphaned assistant turn.
-func (a *agent) window() []message {
-	used, start := len(systemPrompt), len(a.history)
+func windowed(sys string, history []message) []message {
+	used, start := len(sys), len(history)
 	for start > 0 {
-		n := len(a.history[start-1].Content)
-		if used+n > historyBudget && start < len(a.history) {
+		n := len(history[start-1].Content)
+		if used+n > historyBudget && start < len(history) {
 			break
 		}
 		used += n
 		start--
 	}
-	for start < len(a.history)-1 && a.history[start].Role != "user" {
+	for start < len(history)-1 && history[start].Role != "user" {
 		start++
 	}
-	return append([]message{{"system", systemPrompt}}, a.history[start:]...)
+	return append([]message{{"system", sys}}, history[start:]...)
 }
 
 // describe is the short argument preview shown next to a tool call.

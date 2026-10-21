@@ -78,7 +78,7 @@ func (s *fmServer) Close() {
 }
 
 // complete asks the model for a reply constrained to the given JSON schema.
-func (s *fmServer) complete(msgs []message, schema any) (string, error) {
+func (s *fmServer) complete(ctx context.Context, msgs []message, schema any) (string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"model":    "system",
 		"stream":   false,
@@ -88,7 +88,12 @@ func (s *fmServer) complete(msgs []message, schema any) (string, error) {
 			"json_schema": map[string]any{"name": "Action", "schema": schema},
 		},
 	})
-	resp, err := s.client.Post("http://fm/v1/chat/completions", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://fm/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return "", err
 	}

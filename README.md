@@ -30,9 +30,11 @@ Then agree to the `fm` license (see above) and run `fm-code`. The installer neve
     fm-code 'fix the typo in main.go'
     fm-code -C ~/proj -yes 'add a doc comment to Foo'   # -yes skips edit confirmation
 
+**Next-command suggestions.** After each answer, fm-code forks the conversation into a separate model request that looks at the latest output and predicts what you'd ask next (a failing test suggests the fix, finished work suggests running the tests). It appears as grey text at the prompt; press **→** to accept it, then Enter to run it, or just keep typing to ignore it. It runs in the background so the prompt is never delayed, and the fork never touches the assistant's own history. It only appears in an interactive terminal; turn it off with `-no-suggest`, which also switches back to the terminal's plain line input.
+
 In a session: `/clear` resets the conversation (worth doing often, since the model's memory is tiny), `/help` lists commands, `exit` or Ctrl-D quits.
 
-Flags: `-C dir` project root, `-yes` auto-apply edits, `-v` print the model's raw actions, `-version`.
+Flags: `-C dir` project root, `-yes` auto-apply edits, `-no-suggest` disable next-command suggestions, `-v` print the model's raw actions, `-version`.
 
 ## How it works
 
