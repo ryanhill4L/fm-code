@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -150,5 +151,28 @@ func TestRepeatedFailedEditStops(t *testing.T) {
 	}
 	if len(m.schemas) != 4 || len(m.schemas[3].(map[string]any)["anyOf"].([]any)) != 1 {
 		t.Errorf("after three failed edits the model should be made to reply, got %d requests", len(m.schemas))
+	}
+}
+
+func TestFailedEditIsUndoneAndResampled(t *testing.T) {
+	box := newBox(t, true)
+	p := box.root + "/m.py"
+	box.run(action{Tool: "write_file", Path: "m.py", Content: "def f():\n    return 1\n"})
+	m := &scripted{replies: []string{
+		`{"tool":"edit_file","path":"m.py","old_text":"return 1","new_text":"return (1"}`, // breaks the parse
+		`{"tool":"edit_file","path":"m.py","old_text":"return 1","new_text":"return 2"}`,
+		`{"tool":"reply","message":"done"}`,
+	}}
+	a := &agent{model: m, tools: box, out: io.Discard, samples: 3}
+	if got, _ := a.Send("make f return 2"); got != "done" {
+		t.Fatalf("got %q", got)
+	}
+	if data, _ := os.ReadFile(p); string(data) != "def f():\n    return 2\n" {
+		t.Errorf("file = %q", data)
+	}
+	for _, msg := range a.history {
+		if strings.Contains(msg.Content, "return (1") || strings.Contains(msg.Content, "check FAILED") {
+			t.Errorf("the rejected attempt should not stay in history: %q", msg.Content)
+		}
 	}
 }

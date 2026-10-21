@@ -71,6 +71,35 @@ func (t *toolbox) resolve(p string) (string, error) {
 	return abs, nil
 }
 
+// fileSnapshot is a file's content before an edit, so the edit can be undone.
+type fileSnapshot struct {
+	path    string
+	data    []byte
+	existed bool
+}
+
+// snapshot saves the file a file-changing action targets, or returns nil for
+// any other action.
+func (t *toolbox) snapshot(a action) *fileSnapshot {
+	if a.Tool != "edit_file" && a.Tool != "write_file" && a.Tool != "append_file" {
+		return nil
+	}
+	p, err := t.resolve(a.Path)
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(p)
+	return &fileSnapshot{path: p, data: data, existed: err == nil}
+}
+
+func (s *fileSnapshot) restore() {
+	if s.existed {
+		os.WriteFile(s.path, s.data, 0o644)
+	} else {
+		os.Remove(s.path)
+	}
+}
+
 func exists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil

@@ -133,6 +133,9 @@ type agent struct {
 	out   io.Writer
 	debug bool // print each raw action with its token counts and timing
 	think bool // plan each turn in a separate request before acting
+	// samples is the number of tries per file edit: a failed try is undone
+	// and the step sampled again.
+	samples int
 	// question is set for a turn that only asks something; it gets no edit tools.
 	question bool
 	history  []message // excludes the system prompt
@@ -181,7 +184,7 @@ func (a *agent) Send(input string) (string, error) {
 		case act.Tool == "bash" && echoOnly.MatchString(act.Command):
 			result = "echo only shows text to you, not the user. To tell the user something, use reply."
 		default:
-			result = a.tools.run(act)
+			act, result = a.runSampled(act, schema)
 		}
 		failedEdit := strings.HasPrefix(result, "error:") && act.Tool == "edit_file"
 		if mutates(act.Tool) && !strings.HasPrefix(result, "error:") {
@@ -243,6 +246,36 @@ func (a *agent) plan(input string) string {
 	}
 	fmt.Fprintf(a.out, "\n%s✻ Plan: %s%s\n", dim, strings.Join(steps, " → "), reset)
 	return input + "\n\nPlan:\n- " + strings.Join(steps, "\n- ")
+}
+
+// runSampled runs an action. A file edit that errors or fails its check is
+// undone and the step sampled again, up to a.samples tries, so one bad draw
+// costs a request instead of derailing the conversation. The model sees only
+// the attempt that was kept.
+func (a *agent) runSampled(act action, schema any) (action, string) {
+	snap := a.tools.snapshot(act)
+	result := a.tools.run(act)
+	for try := 1; try < a.samples && snap != nil && rejected(result); try++ {
+		taken := a.history[len(a.history)-1]
+		a.history = a.history[:len(a.history)-1]
+		fmt.Fprintf(a.out, "  %s↻ didn't apply cleanly, trying again (%d/%d)%s\n", dim, try+1, a.samples, reset)
+		next, _, err := a.next(schema)
+		if err != nil || a.tools.snapshot(next) == nil {
+			if err == nil {
+				a.history = a.history[:len(a.history)-1]
+			}
+			a.history = append(a.history, taken) // keep the first attempt's outcome
+			return act, result
+		}
+		snap.restore()
+		act, snap = next, a.tools.snapshot(next)
+		result = a.tools.run(act)
+	}
+	return act, result
+}
+
+func rejected(result string) bool {
+	return strings.HasPrefix(result, "error:") || strings.Contains(result, "check FAILED")
 }
 
 // next asks the model for one action and records it in the history.
