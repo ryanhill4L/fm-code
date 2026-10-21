@@ -302,3 +302,13 @@ func TestCRLFFilesKeepTheirLineEndings(t *testing.T) {
 		t.Errorf("got %q", data)
 	}
 }
+
+func TestJSONEditQuotedOnOneLine(t *testing.T) {
+	box := newBox(t, true)
+	p := filepath.Join(box.root, "config.json")
+	os.WriteFile(p, []byte("{\n  \"name\": \"app\",\n  \"port\": 8080\n}\n"), 0o644)
+	got := box.run(action{Tool: "edit_file", Path: "config.json", OldText: `{"name": "app", "port": 8080}`, NewText: `{"name": "app", "port": 8080, "debug": true}`})
+	if data, _ := os.ReadFile(p); string(data) != "{\n  \"name\": \"app\",\n  \"port\": 8080,\n  \"debug\": true\n}\n" {
+		t.Errorf("result %q, file %q", got, data)
+	}
+}
