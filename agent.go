@@ -282,7 +282,7 @@ func (a *agent) runSampled(act action, schema any) (action, string) {
 // unparseable matches a check that failed on syntax rather than, say, a name
 // not yet defined. An edit that makes a file that parsed stop parsing is never
 // a useful step towards anything, so it is undone instead of kept for a fix.
-var unparseable = regexp.MustCompile(`check FAILED \((go vet|python3 -c|node --check)\)[\s\S]*(syntax error|not terminated|newline in|expected '|SyntaxError|IndentationError)|check FAILED: .* is not valid JSON`)
+var unparseable = regexp.MustCompile(`check FAILED \((go vet|python3 -c|node --check)\)[\s\S]*(syntax error|not terminated|newline in|expected [^\n]*, found|missing ','|SyntaxError|IndentationError)|check FAILED: .* is not valid JSON`)
 
 func rejected(result string) bool {
 	return strings.HasPrefix(result, "error:") || strings.Contains(result, "check FAILED")
