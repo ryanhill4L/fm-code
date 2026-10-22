@@ -21,8 +21,8 @@ func main() {
 	noSuggest := flag.Bool("no-suggest", false, "don't suggest the next command (also falls back to plain line input)")
 	debug := flag.Bool("debug", false, "show each raw model action with its token counts, timing and context use")
 	verbose := flag.Bool("v", false, "same as -debug")
-	think := flag.Bool("think", false, "plan each request in a separate model call before acting")
-	samples := flag.Int("samples", 1, "tries per file edit: an edit that fails to apply or breaks the build is undone and sampled again")
+	think := flag.Bool("think", false, "experimental: plan each request in a separate model call before acting (scored lower in evals)")
+	samples := flag.Int("samples", 3, "tries per file edit: an edit that fails to apply or breaks the build is undone and sampled again")
 	tracePath := flag.String("trace", "", "append every model request and response to this JSONL file")
 	dir := flag.String("C", ".", "project directory the assistant may read and edit")
 	flag.Usage = func() {
