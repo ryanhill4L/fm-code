@@ -209,3 +209,11 @@ func TestSyntaxUndoOnlyWhenThisEditBrokeThisFile(t *testing.T) {
 		t.Errorf("fixing one of two syntax errors must be kept, file = %q", data)
 	}
 }
+
+func TestUnparseableMatchesGoParseErrorsOnly(t *testing.T) {
+	parse := "check FAILED (go vet), fix this before replying:\nvet: ./permissions.go:63:1: expected operand, found '}' (and 10 more errors)"
+	typed := "check FAILED (go vet), fix this before replying:\nvet: ./a_test.go:5:9: invalid operation: got != expected (mismatched types int and string)"
+	if !unparseable.MatchString(parse) || unparseable.MatchString(typed) {
+		t.Errorf("parse error matched=%v, type error matched=%v", unparseable.MatchString(parse), unparseable.MatchString(typed))
+	}
+}
