@@ -231,12 +231,16 @@ func blockEnd(src string, start, end int) (int, bool) {
 	return pos, true
 }
 
-// locateJSON accepts an old_text that is the whole JSON document written
-// differently (the model tends to quote a pretty-printed file on one line),
-// and writes new_text in the file's indentation.
+// locateJSON accepts an old_text that is the whole JSON document, or an
+// object within it, written differently (the model tends to quote a
+// pretty-printed file on one line), and writes the result in the file's
+// indentation.
 func locateJSON(src, old, new string, notFound error) (start, end int, replacement string, err error) {
 	var file, quoted any
 	if json.Unmarshal([]byte(src), &file) != nil || json.Unmarshal([]byte(old), &quoted) != nil || !reflect.DeepEqual(file, quoted) {
+		if out, ok := patchJSON(src, old, new); ok {
+			return 0, len(strings.TrimRight(src, "\n")), out, nil
+		}
 		return 0, 0, "", notFound
 	}
 	indent := "  "

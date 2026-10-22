@@ -353,3 +353,34 @@ func TestEditUnescapesLiteralNewlines(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestEditPatchesAJSONFragmentQuotedInAnotherLayout(t *testing.T) {
+	src := "{\n  \"name\": \"shop\",\n  \"dependencies\": {\n    \"express\": \"^4.18.0\",\n    \"lodash\": \"^4.17.21\",\n    \"zod\": \"^3.22.0\"\n  },\n  \"private\": true\n}\n"
+	want := "{\n  \"name\": \"shop\",\n  \"dependencies\": {\n    \"express\": \"^4.18.0\",\n    \"zod\": \"^3.22.0\"\n  },\n  \"private\": true\n}\n"
+	cases := []struct{ old, new string }{
+		{`{"dependencies": {"express": "^4.18.0", "lodash": "^4.17.21", "zod": "^3.22.0"}`, `{"dependencies": {"express": "^4.18.0", "zod": "^3.22.0"}}`},
+		{`"lodash": "^4.17.21", "zod": "^3.22.0"`, `"zod": "^3.22.0"`},
+	}
+	for _, c := range cases {
+		start, end, repl, err := locateJSON(src, c.old, c.new, fmt.Errorf("not found"))
+		if c.old[0] != '{' { // a bare key list isn't an object; leave it to the other matchers
+			if err == nil {
+				t.Errorf("%q should not patch", c.old)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := src[:start] + repl + src[end:]; got != want {
+			t.Errorf("got\n%s", got)
+		}
+	}
+	added, _ := patchJSON(src, `{"private": true}`, `{"private": true, "license": "MIT"}`)
+	if !strings.Contains(added, "\"private\": true,\n  \"license\": \"MIT\"\n}") {
+		t.Errorf("new keys go at the end:\n%s", added)
+	}
+	if _, ok := patchJSON(src, `{"name": "other"}`, `{"name": "x"}`); ok {
+		t.Error("a fragment that doesn't match the file must not patch")
+	}
+}
