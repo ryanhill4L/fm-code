@@ -76,3 +76,16 @@ func TestProjectTreeFoldsCrowdedDirectories(t *testing.T) {
 		t.Errorf("crowded directory should be folded:\n%s", got)
 	}
 }
+
+func TestRelevantFilesShowsASmallProjectWhole(t *testing.T) {
+	box := newBox(t, true)
+	for name, body := range map[string]string{"cart.py": "class Cart:\n    pass\n", "checkout.py": "from cart import Cart\n", "main.py": "print('hi')\n"} {
+		os.WriteFile(filepath.Join(box.root, name), []byte(body), 0o644)
+	}
+	got := box.relevantFiles("rename the class Cart to ShoppingCart everywhere")
+	for _, f := range []string{"== cart.py ==", "== checkout.py ==", "== main.py =="} {
+		if !strings.Contains(got, f) {
+			t.Errorf("missing %s:\n%s", f, got)
+		}
+	}
+}
