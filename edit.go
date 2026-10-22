@@ -347,6 +347,9 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 	if !numberedLine.MatchString(src) {
 		new = stripLineNumbers(new)
 	}
+	if numberOnlyLine.MatchString(old) && !numberOnlyLine.MatchString(src) {
+		old, new = numberOnlyLine.ReplaceAllString(old, ""), numberOnlyLine.ReplaceAllString(new, "")
+	}
 	switch at := wordMatches(src, old); {
 	case len(at) > 1:
 		return 0, 0, "", fmt.Errorf("old_text matches %d places; include more surrounding lines to make it unique", len(at))
@@ -483,6 +486,10 @@ func stripLineNumbers(s string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// numberOnlyLine is a read_file line number the model copied onto a line of
+// its own ("21\nfoo()" for "21\tfoo()").
+var numberOnlyLine = regexp.MustCompile(`(?m)^[ \t]*\d+[ \t]*(\n|$)`)
 
 var declName = regexp.MustCompile(`^\s*(?:export\s+)?(?:async\s+)?(?:def|func|function|class|type)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)`)
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,5 +33,46 @@ func TestRelevantFilesPicksByNameAndWords(t *testing.T) {
 	}
 	if box.relevantFiles("hi") != "" {
 		t.Error("a request with no matching words should add nothing")
+	}
+}
+
+func TestRelevantFilesOnARealishRepo(t *testing.T) {
+	box := newBox(t, true)
+	big := strings.Repeat("// unrelated filler\n", 300)
+	files := map[string]string{
+		"README.md":           "history entries, network access, version, permission modes, everything\n",
+		"history.go":          "package main\n\nconst maxHistory = 500\n",
+		"permissions.go":      big + "var riskyCommand = regexp.MustCompile(`curl|wget`)\n" + big,
+		"permissions_test.go": "package main\n// riskyCommand is tested here\n",
+		"main.go":             "package main\n// network version entries\n",
+	}
+	for name, body := range files {
+		os.WriteFile(filepath.Join(box.root, name), []byte(body), 0o644)
+	}
+	got := box.relevantFiles("Change the maximum number of history entries kept from 500 to 1000.")
+	if !strings.HasPrefix(got[strings.Index(got, "=="):], "== history.go ==") {
+		t.Errorf("history.go should come first:\n%s", got)
+	}
+	got = box.relevantFiles("Which commands does the riskyCommand regex treat as network access?")
+	if !strings.HasPrefix(got[strings.Index(got, "=="):], "== permissions.go ==\n(excerpts; the file has 601 lines") ||
+		!strings.Contains(got, "301\tvar riskyCommand") {
+		t.Errorf("the big file defining riskyCommand should be excerpted first:\n%s", got)
+	}
+}
+
+func TestProjectTreeFoldsCrowdedDirectories(t *testing.T) {
+	var files []string
+	for i := 0; i < 50; i++ {
+		files = append(files, fmt.Sprintf("evals/cases/c%d/prompt.txt", i), fmt.Sprintf("evals/cases/c%d/check.sh", i))
+	}
+	files = append(files, "evals/run.sh", "main.go", "agent.go", "docs/a.md", "docs/b.md")
+	got := strings.Join(foldTree(files, 20), "\n")
+	for _, want := range []string{"main.go", "agent.go", "evals/run.sh", "evals/cases/ (100 files)", "docs/a.md"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tree should show %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "c7/") {
+		t.Errorf("crowded directory should be folded:\n%s", got)
 	}
 }

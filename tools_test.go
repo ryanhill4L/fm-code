@@ -312,3 +312,18 @@ func TestJSONEditQuotedOnOneLine(t *testing.T) {
 		t.Errorf("result %q, file %q", got, data)
 	}
 }
+
+func TestEditDropsLineNumbersCopiedOntoTheirOwnLines(t *testing.T) {
+	src := "package main\n\nfunc main() {\n\tx := 1\n\t_ = x\n}\n"
+	start, end, repl, err := locate(src, "4\n\tx := 1", "4\n\tx := 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := src[:start] + repl + src[end:]; got != strings.Replace(src, "x := 1", "x := 2", 1) {
+		t.Errorf("got %q", got)
+	}
+	nums := "a = [\n1\n2\n]\n"
+	if _, _, repl, err := locate(nums, "1\n2", "1\n3"); err != nil || repl != "1\n3" {
+		t.Errorf("a file with number-only lines keeps them: %q %v", repl, err)
+	}
+}
