@@ -64,8 +64,7 @@ func decodeNode(d *json.Decoder) (*jnode, error) {
 		_, err = d.Token()
 		return n, err
 	}
-	raw, _ := json.Marshal(tok)
-	return &jnode{raw: string(raw)}, nil
+	return &jnode{raw: marshal(tok)}, nil
 }
 
 func (n *jnode) get(k string) *jnode {
@@ -151,8 +150,7 @@ func (n *jnode) write(b *bytes.Buffer) {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			key, _ := json.Marshal(k)
-			b.Write(key)
+			b.WriteString(marshal(k))
 			b.WriteByte(':')
 			n.vals[i].write(b)
 		}
@@ -221,4 +219,13 @@ func patchJSON(src, old, new string) (string, bool) {
 	}
 	json.Indent(&out, compact.Bytes(), "", indent)
 	return out.String(), true
+}
+
+// marshal encodes a scalar without escaping <, > and &, as json.Marshal does.
+func marshal(v any) string {
+	var b bytes.Buffer
+	e := json.NewEncoder(&b)
+	e.SetEscapeHTML(false)
+	e.Encode(v)
+	return strings.TrimSuffix(b.String(), "\n")
 }

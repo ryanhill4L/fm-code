@@ -384,3 +384,40 @@ func TestEditPatchesAJSONFragmentQuotedInAnotherLayout(t *testing.T) {
 		t.Error("a fragment that doesn't match the file must not patch")
 	}
 }
+
+func TestEditFallbacksDontMisfire(t *testing.T) {
+	if _, _, _, err := locate("if (a < b) {\n", "if a < b", "if a > b"); err == nil {
+		t.Error("a changed operator can't be applied by word matching, so it must fail")
+	}
+	if _, _, _, err := locate("x := 10\nfmt.Println(\"x 1\")\n", "x = 1", "x = 2"); err == nil {
+		t.Error("words inside a string literal must not match")
+	}
+	src := "a := 1\nb := 2\n"
+	start, end, repl, err := locate(src, `a := 1\nb := 2`, `a := 1\nb := 2\nfmt.Printf("%d\\n", a)`)
+	if err != nil || src[:start]+repl+src[end:] != "a := 1\nb := 2\nfmt.Printf(\"%d\\n\", a)\n" {
+		t.Errorf("an escaped \\\\n must stay escaped: %q %v", repl, err)
+	}
+	src = "foo()\nbar()\n"
+	start, end, repl, err = locate(src, "1\nfoo()", "1\nfoo()\nvals = [\n    42\n]")
+	if err != nil || !strings.Contains(repl, "42") {
+		t.Errorf("only copied line numbers are dropped: %q %v", repl, err)
+	}
+}
+
+func TestPatchJSONKeepsUntouchedStrings(t *testing.T) {
+	src := "{\n  \"name\": \"x\",\n  \"v\": 1,\n  \"url\": \"a?b=1&c=<2>\"\n}\n"
+	got, ok := patchJSON(src, `{"name": "x", "v": 1}`, `{"name": "x", "v": 2}`)
+	if !ok || !strings.Contains(got, `"a?b=1&c=<2>"`) || !strings.Contains(got, `"v": 2`) {
+		t.Errorf("got %v\n%s", ok, got)
+	}
+}
+
+func TestRelevantFilesNeverMarksUnshownFilesRead(t *testing.T) {
+	box := newBox(t, true)
+	body := strings.Repeat("zebrafoo filler text here.....\n", 190) // fits raw, not once numbered
+	os.WriteFile(filepath.Join(box.root, "big.txt"), []byte(body), 0o644)
+	got := box.relevantFiles("zebrafoo")
+	if box.read[filepath.Join(box.root, "big.txt")] && !strings.Contains(got, "== big.txt ==\n1\t") {
+		t.Errorf("big.txt marked read without being shown in full:\n%.300s", got)
+	}
+}

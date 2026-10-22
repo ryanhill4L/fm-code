@@ -113,8 +113,8 @@ func (t *toolbox) relevantFiles(input string) string {
 			break
 		}
 		var text string
-		if len(f.data) <= left {
-			text, _ = t.readFile(action{Path: f.path})
+		if numberedSize(f.data) <= left {
+			text, _ = t.readFile(action{Path: f.path}) // marks it read, so only once it will be shown
 		} else {
 			text = excerpt(f.data, f.hits, left)
 		}
@@ -129,6 +129,12 @@ func (t *toolbox) relevantFiles(input string) string {
 		return ""
 	}
 	return "\n\nFiles that look relevant (current contents, so you don't need to read them again):" + b.String()
+}
+
+// numberedSize is an upper bound on how long data is once read_file numbers its lines.
+func numberedSize(data string) int {
+	n := strings.Count(data, "\n") + 1
+	return len(data) + n*(len(fmt.Sprint(n))+1)
 }
 
 // definesIdent reports whether src declares id rather than just using it.

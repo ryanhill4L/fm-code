@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -271,7 +272,7 @@ func (a *agent) runSampled(act action, schema any) (action, string) {
 		act, snap = next, a.tools.snapshot(next)
 		result = a.tools.run(act)
 	}
-	if snap != nil && unparseable.MatchString(result) {
+	if snap != nil && unparseable.MatchString(result) && strings.Contains(result, filepath.Base(act.Path)) && parses(snap.path, snap.data) {
 		snap.restore()
 		return act, "error: that edit was undone because it left " + act.Path + " unparseable, so the file is unchanged. Make a smaller edit." + result[strings.Index(result, "check FAILED"):]
 	}
@@ -279,9 +280,9 @@ func (a *agent) runSampled(act action, schema any) (action, string) {
 }
 
 // unparseable matches a check that failed on syntax rather than, say, a name
-// not yet defined. A file that no longer parses is never a useful step
-// towards anything, so such an edit is undone instead of kept for a fix.
-var unparseable = regexp.MustCompile(`check FAILED \((go vet|python3 -c|node --check)\)[\s\S]*(syntax error|not terminated|newline in|expected [a-z';(){]|SyntaxError|IndentationError)|check FAILED: .* is not valid JSON`)
+// not yet defined. An edit that makes a file that parsed stop parsing is never
+// a useful step towards anything, so it is undone instead of kept for a fix.
+var unparseable = regexp.MustCompile(`check FAILED \((go vet|python3 -c|node --check)\)[\s\S]*(syntax error|not terminated|newline in|expected '|SyntaxError|IndentationError)|check FAILED: .* is not valid JSON`)
 
 func rejected(result string) bool {
 	return strings.HasPrefix(result, "error:") || strings.Contains(result, "check FAILED")

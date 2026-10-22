@@ -194,3 +194,18 @@ func TestEditThatBreaksSyntaxIsUndoneEvenWithoutSamples(t *testing.T) {
 		t.Errorf("the model should be told the edit was undone: %q", a.history[2].Content)
 	}
 }
+
+func TestSyntaxUndoOnlyWhenThisEditBrokeThisFile(t *testing.T) {
+	box := newBox(t, true)
+	p := box.root + "/m.py"
+	os.WriteFile(p, []byte("def f(:\n    pass\ndef g(:\n    pass\n"), 0o644)
+	m := &scripted{replies: []string{
+		`{"tool":"edit_file","path":"m.py","old_text":"def f(:","new_text":"def f():"}`,
+		`{"tool":"reply","message":"one down"}`,
+	}}
+	a := &agent{model: m, tools: box, out: io.Discard, samples: 1}
+	a.Send("fix the syntax errors")
+	if data, _ := os.ReadFile(p); !strings.HasPrefix(string(data), "def f():") {
+		t.Errorf("fixing one of two syntax errors must be kept, file = %q", data)
+	}
+}
