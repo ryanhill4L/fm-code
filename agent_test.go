@@ -176,3 +176,21 @@ func TestFailedEditIsUndoneAndResampled(t *testing.T) {
 		}
 	}
 }
+
+func TestEditThatBreaksSyntaxIsUndoneEvenWithoutSamples(t *testing.T) {
+	box := newBox(t, true)
+	p := box.root + "/m.py"
+	os.WriteFile(p, []byte("def f():\n    return 1\n"), 0o644)
+	m := &scripted{replies: []string{
+		`{"tool":"edit_file","path":"m.py","old_text":"return 1","new_text":"return (1"}`,
+		`{"tool":"reply","message":"gave up"}`,
+	}}
+	a := &agent{model: m, tools: box, out: io.Discard, samples: 1}
+	a.Send("make f return 2")
+	if data, _ := os.ReadFile(p); string(data) != "def f():\n    return 1\n" {
+		t.Errorf("a syntax-breaking edit should be undone, file = %q", data)
+	}
+	if !strings.Contains(a.history[2].Content, "was undone") {
+		t.Errorf("the model should be told the edit was undone: %q", a.history[2].Content)
+	}
+}

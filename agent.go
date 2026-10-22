@@ -271,8 +271,17 @@ func (a *agent) runSampled(act action, schema any) (action, string) {
 		act, snap = next, a.tools.snapshot(next)
 		result = a.tools.run(act)
 	}
+	if snap != nil && unparseable.MatchString(result) {
+		snap.restore()
+		return act, "error: that edit was undone because it left " + act.Path + " unparseable, so the file is unchanged. Make a smaller edit." + result[strings.Index(result, "check FAILED"):]
+	}
 	return act, result
 }
+
+// unparseable matches a check that failed on syntax rather than, say, a name
+// not yet defined. A file that no longer parses is never a useful step
+// towards anything, so such an edit is undone instead of kept for a fix.
+var unparseable = regexp.MustCompile(`check FAILED \((go vet|python3 -c|node --check)\)[\s\S]*(syntax error|not terminated|newline in|expected [a-z';(){]|SyntaxError|IndentationError)|check FAILED: .* is not valid JSON`)
 
 func rejected(result string) bool {
 	return strings.HasPrefix(result, "error:") || strings.Contains(result, "check FAILED")
@@ -331,19 +340,6 @@ func (a *agent) window(budget int) []message {
 		sys += "\n\nProject files (paths are relative to the project root):\n" + projectTree(a.tools.root, maxTreeEntries)
 	}
 	return windowed(sys, a.history, budget)
-}
-
-// projectTree lists the project's files, one per line, so the model never has
-// to guess a path. Large projects are cut off with a note to use glob.
-func projectTree(root string, limit int) string {
-	files := projectFiles(root, 5000)
-	if len(files) == 0 {
-		return "(the project is empty)"
-	}
-	if len(files) > limit {
-		files = append(files[:limit], fmt.Sprintf("... and %d more (use glob to find them)", len(files)-limit))
-	}
-	return strings.Join(files, "\n")
 }
 
 // windowed returns sys plus as many recent messages as fit the budget.
