@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -347,6 +348,11 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 	if !numberedLine.MatchString(src) {
 		new = stripLineNumbers(new)
 	}
+	if strings.Contains(old, `\n`) && !strings.Contains(src, `\n`) {
+		// The model escaped its newlines twice, so they arrived as a literal \n.
+		unescape := strings.NewReplacer(`\n`, "\n", `\t`, "\t")
+		old, new = unescape.Replace(old), unescape.Replace(new)
+	}
 	if numberOnlyLine.MatchString(old) && !numberOnlyLine.MatchString(src) {
 		old, new = numberOnlyLine.ReplaceAllString(old, ""), numberOnlyLine.ReplaceAllString(new, "")
 	}
@@ -398,10 +404,68 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 		if start, end, repl, ok := matchLineSet(lines, want, new); ok {
 			return start, end, repl, nil
 		}
+		if start, end, repl, ok := matchTokens(lines, want, new); ok {
+			return start, end, repl, nil
+		}
 		return 0, 0, "", fmt.Errorf("old_text not found%s; read the file again and copy the lines exactly", closestLine(lines, want[0]))
 	}
 	start, end = lineSpan(lines, found, found+len(want))
-	return start, end, indentLines(dedent(new), indentOf(lines[found])), nil
+	return start, end, indentLines(dedent(tabsLike(lines[found:found+len(want)], want, new)), indentOf(lines[found])), nil
+}
+
+// tabsLike rewrites new's space indentation as tabs when old_text used spaces
+// where the file has tabs, as a Makefile requires.
+func tabsLike(have, want []string, new string) string {
+	for j, w := range want {
+		fi, wi := indentOf(have[j]), indentOf(w)
+		if fi == "" || strings.Trim(fi, "\t") != "" || wi == "" || strings.Trim(wi, " ") != "" || len(wi)%len(fi) != 0 {
+			continue
+		}
+		unit := len(wi) / len(fi)
+		lines := strings.Split(new, "\n")
+		for i, l := range lines {
+			n := len(l) - len(strings.TrimLeft(l, " "))
+			lines[i] = strings.Repeat("\t", n/unit) + l[n-n%unit:]
+		}
+		return strings.Join(lines, "\n")
+	}
+	return new
+}
+
+var token = regexp.MustCompile(`[A-Za-z0-9_.\-]+`)
+
+// matchTokens handles a one-line old_text with the right words but the wrong
+// punctuation, e.g. version "1.2.0" for "version": "1.2.0",. If exactly one
+// line holds old_text's words in order, the words that new_text changes are
+// swapped in place and the line's own punctuation is kept.
+func matchTokens(lines, want []string, new string) (start, end int, repl string, ok bool) {
+	oldT, newT := token.FindAllString(want[0], -1), token.FindAllString(new, -1)
+	if len(want) != 1 || strings.Contains(new, "\n") || len(oldT) == 0 || len(oldT) != len(newT) {
+		return 0, 0, "", false
+	}
+	found, at := -1, 0
+	for i, l := range lines {
+		lt := token.FindAllString(l, -1)
+		for k := 0; k+len(oldT) <= len(lt); k++ {
+			if slices.Equal(lt[k:k+len(oldT)], oldT) {
+				if found >= 0 {
+					return 0, 0, "", false
+				}
+				found, at = i, k
+				break
+			}
+		}
+	}
+	if found < 0 {
+		return 0, 0, "", false
+	}
+	line := strings.TrimSuffix(lines[found], "\n")
+	spans := token.FindAllStringIndex(line, -1)[at : at+len(oldT)]
+	for k := len(spans) - 1; k >= 0; k-- {
+		line = line[:spans[k][0]] + newT[k] + line[spans[k][1]:]
+	}
+	start, end = lineSpan(lines, found, found+1)
+	return start, end, line, true
 }
 
 // lineSpan is the byte range of lines[from:to], without the final newline.

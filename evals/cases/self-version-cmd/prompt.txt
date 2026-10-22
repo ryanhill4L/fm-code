@@ -1,0 +1,1 @@
+Add a /version command to the interactive session that prints the version string, like the -version flag does. Also list it in /help.

@@ -43,9 +43,9 @@ func (t *toolbox) check(p string) string {
 		if !json.Valid(data) {
 			return "\ncheck FAILED: " + filepath.Base(p) + " is not valid JSON. Fix it before replying."
 		}
-		return "\ncheck: valid JSON. If the task is done, reply now."
+		return "\ncheck: valid JSON. If every part of the request is done, reply now."
 	default:
-		return "\nIf the task is done, reply now."
+		return "\nIf every part of the request is done, reply now."
 	}
 	var ran []string
 	for _, cmd := range cmds {
@@ -66,7 +66,7 @@ func (t *toolbox) check(p string) string {
 		ran = append(ran, name)
 	}
 	if len(ran) == 0 {
-		return "\nIf the task is done, reply now."
+		return "\nIf every part of the request is done, reply now."
 	}
-	return "\ncheck: OK (" + strings.Join(ran, ", ") + "). If the task is done, reply now."
+	return "\ncheck: OK (" + strings.Join(ran, ", ") + "). If every part of the request is done, reply now."
 }

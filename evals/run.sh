@@ -3,7 +3,8 @@
 #
 # A case is a directory under evals/cases/<name>/ holding:
 #   prompt.txt  what the user types
-#   files/      the starting project (copied to a fresh temp dir)
+#   files/      the starting project (copied to a fresh temp dir), or
+#   snapshot    a commit of this repo to start from instead, to test on a real codebase
 #   check.sh    run in the project dir afterwards; exit 0 means pass.
 #               $OUTPUT is the path to fm-code's captured stdout+stderr.
 #
@@ -37,6 +38,7 @@ for c in "${cases[@]}"; do
   [ -f "$src/prompt.txt" ] || { echo "skip $c (no prompt.txt)"; continue; }
   work=$(mktemp -d)
   [ -d "$src/files" ] && cp -R "$src/files/." "$work/"
+  [ -f "$src/snapshot" ] && git -C "$repo" archive "$(cat "$src/snapshot")" | tar -x -C "$work"
   (cd "$work" && git init -q && git add -A && git -c user.email=e@e -c user.name=e commit -qm init --allow-empty) >/dev/null 2>&1
   log="$out/$c"; mkdir -p "$log"
   start=$(date +%s)
