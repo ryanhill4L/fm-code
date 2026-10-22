@@ -1,0 +1,1 @@
+Make auto mode treat telnet as network access, like curl and wget.

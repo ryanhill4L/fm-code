@@ -327,3 +327,29 @@ func TestEditDropsLineNumbersCopiedOntoTheirOwnLines(t *testing.T) {
 		t.Errorf("a file with number-only lines keeps them: %q %v", repl, err)
 	}
 }
+
+func TestEditMatchesWordsDespitePunctuation(t *testing.T) {
+	src := "{\n  \"name\": \"widget\",\n  \"version\": \"1.2.0\",\n  \"deps\": { \"x\": \"^1.2.0\" }\n}\n"
+	start, end, repl, err := locate(src, `version "1.2.0"`, `version "1.3.0"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := src[:start] + repl + src[end:]; got != strings.Replace(src, `"version": "1.2.0"`, `"version": "1.3.0"`, 1) {
+		t.Errorf("got %q", got)
+	}
+	two := "version: \"1.2.0\"\nbuild version: \"1.2.0\"\n"
+	if _, _, _, err := locate(two, `version "1.2.0"`, `version "1.3.0"`); err == nil {
+		t.Error("words found on two lines must stay ambiguous")
+	}
+}
+
+func TestEditUnescapesLiteralNewlines(t *testing.T) {
+	src := ".PHONY: run\n\nrun:\n\tpython3 main.py\n"
+	start, end, repl, err := locate(src, `run:\n    python3 main.py`, `run:\n    python3 main.py --verbose`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := src[:start] + repl + src[end:]; got != ".PHONY: run\n\nrun:\n\tpython3 main.py --verbose\n" {
+		t.Errorf("got %q", got)
+	}
+}
