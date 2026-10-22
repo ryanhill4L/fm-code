@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"go/parser"
+	gotoken "go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,4 +72,31 @@ func (t *toolbox) check(p string) string {
 		return "\nIf every part of the request is done, reply now."
 	}
 	return "\ncheck: OK (" + strings.Join(ran, ", ") + "). If every part of the request is done, reply now."
+}
+
+// parses reports whether data, the contents of the file at p, is free of
+// syntax errors, for the languages check knows. Unknown kinds count as not
+// parsing, so nothing is undone on their account.
+func parses(p string, data []byte) bool {
+	switch filepath.Ext(p) {
+	case ".go":
+		_, err := parser.ParseFile(gotoken.NewFileSet(), p, data, 0)
+		return err == nil
+	case ".json":
+		return json.Valid(data)
+	case ".py":
+		cmd := exec.Command("python3", "-c", "import ast,sys; ast.parse(sys.stdin.read())")
+		cmd.Stdin = bytes.NewReader(data)
+		return cmd.Run() == nil
+	case ".js", ".mjs", ".cjs":
+		f, err := os.CreateTemp("", "fm-code-*"+filepath.Ext(p))
+		if err != nil {
+			return false
+		}
+		defer os.Remove(f.Name())
+		f.Write(data)
+		f.Close()
+		return exec.Command("node", "--check", f.Name()).Run() == nil
+	}
+	return false
 }

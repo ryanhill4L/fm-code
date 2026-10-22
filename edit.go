@@ -354,11 +354,21 @@ func locate(src, old, new string) (start, end int, replacement string, err error
 	}
 	if strings.Contains(old, `\n`) && !strings.Contains(src, `\n`) {
 		// The model escaped its newlines twice, so they arrived as a literal \n.
-		unescape := strings.NewReplacer(`\n`, "\n", `\t`, "\t")
+		unescape := strings.NewReplacer(`\\`, `\`, `\n`, "\n", `\t`, "\t")
 		old, new = unescape.Replace(old), unescape.Replace(new)
 	}
 	if numberOnlyLine.MatchString(old) && !numberOnlyLine.MatchString(src) {
-		old, new = numberOnlyLine.ReplaceAllString(old, ""), numberOnlyLine.ReplaceAllString(new, "")
+		copied := map[string]bool{}
+		for _, m := range numberOnlyLine.FindAllString(old, -1) {
+			copied[strings.TrimSpace(m)] = true
+		}
+		old = numberOnlyLine.ReplaceAllString(old, "")
+		new = numberOnlyLine.ReplaceAllStringFunc(new, func(m string) string {
+			if copied[strings.TrimSpace(m)] {
+				return ""
+			}
+			return m
+		})
 	}
 	switch at := wordMatches(src, old); {
 	case len(at) > 1:
@@ -429,7 +439,7 @@ func tabsLike(have, want []string, new string) string {
 		lines := strings.Split(new, "\n")
 		for i, l := range lines {
 			n := len(l) - len(strings.TrimLeft(l, " "))
-			lines[i] = strings.Repeat("\t", n/unit) + l[n-n%unit:]
+			lines[i] = strings.Repeat("\t", (n+unit-1)/unit) + l[n:] // a partial indent rounds up to a tab
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -444,12 +454,22 @@ var token = regexp.MustCompile(`[A-Za-z0-9_.\-]+`)
 // swapped in place and the line's own punctuation is kept.
 func matchTokens(lines, want []string, new string) (start, end int, repl string, ok bool) {
 	oldT, newT := token.FindAllString(want[0], -1), token.FindAllString(new, -1)
-	if len(want) != 1 || strings.Contains(new, "\n") || len(oldT) == 0 || len(oldT) != len(newT) {
-		return 0, 0, "", false
+	if len(want) != 1 || strings.Contains(new, "\n") || len(oldT) == 0 || len(oldT) != len(newT) || punctuation(want[0]) != punctuation(new) {
+		return 0, 0, "", false // only words may change, or the edit would be lost
 	}
+	// Outside JSON, words inside a string literal don't count: x = 1 is not "x 1".
+	data := json.Valid([]byte(strings.Join(lines, "")))
 	found, at := -1, 0
 	for i, l := range lines {
-		lt := token.FindAllString(l, -1)
+		var lt []string
+		code := codeMask(l, "\x00")
+		for _, sp := range token.FindAllStringIndex(l, -1) {
+			if data || code[sp[0]] {
+				lt = append(lt, l[sp[0]:sp[1]])
+			} else {
+				lt = append(lt, "\x00") // a placeholder no word equals
+			}
+		}
 		for k := 0; k+len(oldT) <= len(lt); k++ {
 			if slices.Equal(lt[k:k+len(oldT)], oldT) {
 				if found >= 0 {
@@ -468,8 +488,16 @@ func matchTokens(lines, want []string, new string) (start, end int, repl string,
 	for k := len(spans) - 1; k >= 0; k-- {
 		line = line[:spans[k][0]] + newT[k] + line[spans[k][1]:]
 	}
+	if line == strings.TrimSuffix(lines[found], "\n") {
+		return 0, 0, "", false
+	}
 	start, end = lineSpan(lines, found, found+1)
 	return start, end, line, true
+}
+
+// punctuation is s without its words or spaces.
+func punctuation(s string) string {
+	return strings.Join(strings.Fields(token.ReplaceAllString(s, " ")), "")
 }
 
 // lineSpan is the byte range of lines[from:to], without the final newline.
