@@ -106,10 +106,17 @@ func (t *toolbox) relevantFiles(input string) string {
 		}
 	}
 	sort.SliceStable(files, func(i, j int) bool { return files[i].score > files[j].score })
+	// A project small enough to show whole is shown whole: the model does
+	// better seeing every file than trusting the scores to pick.
+	total := 0
+	for _, f := range files {
+		total += numberedSize(f.data) + len(f.path) + 5
+	}
+	whole := total <= contextBudget && len(files) > 0 && files[0].score >= 5
 	var b strings.Builder
 	left, shown := contextBudget, 0
 	for _, f := range files {
-		if f.score < 5 || f.score < files[0].score/3 || shown == maxContextFiles {
+		if !whole && (f.score < 5 || f.score < files[0].score/3 || shown == maxContextFiles) {
 			break
 		}
 		var text string
