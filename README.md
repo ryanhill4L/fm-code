@@ -50,6 +50,8 @@ Tools: `list_dir`, `read_file`, `glob` (supports `**`), `grep`, `write_file`, `e
 
 The on-device model has a window of about 8k tokens, shared by prompt and reply. History is trimmed to the most recent ~16k characters, and a request that still overflows is retried with less. The project's file list goes in the system prompt so the model doesn't guess paths. Each request also starts with the contents of the files it most likely concerns: files named in it, or files containing its words, up to about 6k characters. A request that is only a question gets no edit tools. Paths can't leave the project through `..` or a symlink, and `.git` is off limits. Every edit is followed by a quick check (`go vet`, a Python parse, `node --check`, or JSON validation), plus the project's tests outside ask mode, and the result is shown to the model. Test files can't be changed unless the request asks for test changes. `write_file` refuses to replace a file the model hasn't read, or to drop most of its lines. `edit_file` repairs the indentation mistakes small models make. Expect fm-code to be best at small, focused edits.
 
+[docs/DESIGN.md](docs/DESIGN.md) explains why the harness works this way and where each piece lives. [evals/HISTORY.md](evals/HISTORY.md) records each change and its eval score.
+
 ## Evals
 
 `evals/run.sh` runs fm-code against every case in `evals/cases/` and scores each one with its `check.sh`. `evals/summarize.py <run> [<older run>]` prints the pass rate by category, common failure signatures, and the cases that changed between two runs. Requests to the model are serialized, so run one suite at a time.
