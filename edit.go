@@ -344,6 +344,12 @@ func lostLines(old, new string) int {
 // old_text copied without its leading indent, or new_text written as if it
 // started at column zero. If old doesn't occur exactly, whole lines that
 // match ignoring indentation are accepted.
+//
+// Copying text exactly is this model's weakest skill, so a miss falls through
+// a ladder of narrower guesses, strictest first: a declaration found by name,
+// lines that each occur once but apart, then a single line with the same words
+// in order. Each rung applies only when it finds exactly one place; anything
+// looser is reported as not found with the closest line, never applied.
 func locate(src, old, new string) (start, end int, replacement string, err error) {
 	if strings.TrimSpace(old) == "" {
 		return 0, 0, "", fmt.Errorf("old_text is required")
