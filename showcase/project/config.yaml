@@ -1,0 +1,8 @@
+# Bookshop settings. The Go program does not read this file yet.
+server:
+  host: localhost
+  port: 8080
+inventory:
+  file: inventory.json
+  low_stock_threshold: 3
+currency: USD
