@@ -1,0 +1,9 @@
+[
+  {"title": "Dune", "author": "Frank Herbert", "price": 9.99, "quantity": 2},
+  {"title": "Emma", "author": "Jane Austen", "price": 7.50, "quantity": 3},
+  {"title": "Persuasion", "author": "Jane Austen", "price": 6.75, "quantity": 5},
+  {"title": "Ulysses", "author": "James Joyce", "price": 12.00, "quantity": 8},
+  {"title": "Dubliners", "author": "James Joyce", "price": 5.25, "quantity": 1},
+  {"title": "Middlemarch", "author": "George Eliot", "price": 10.50, "quantity": 4},
+  {"title": "The Hobbit", "author": "J. R. R. Tolkien", "price": 8.99, "quantity": 0}
+]
